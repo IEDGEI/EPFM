@@ -1733,6 +1733,7 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
     { key: 'margin', label: '할당 여유지수', align: 'right' },
     { key: 'season', label: '정산기 여부', align: 'center' },
   ];
+  const recentHistory = r.history.slice(-24);
   const rows = r.next1y.map((m) => ({
     month: fmtMonth(m.날짜).replace(/ /g, '\u00a0'),
     price: won(m.예측가격).replace(/ /g, '\u00a0'),
@@ -1843,8 +1844,8 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
             {/* right */}
             <section style={{ border: '1px solid #b1b8be', borderRadius: 8, background: '#fff', padding: 24, minWidth: 0 }}>
               <h2 style={{ margin: '0 0 4px', fontSize: 19, fontWeight: 700 }}>과거 실제 가격 + 향후 1년 예측 곡선</h2>
-              <p style={{ margin: '0 0 16px', fontSize: 15, color: '#6d7882' }}>실선: 과거 실측 ({r.history[0].날짜.getFullYear()}–{r.latestDate.getFullYear()}) · 점선: 실행일 기준 AI 연속 예측 (~{fmtMonth(r.targetEnd)})</p>
-              <Chart history={r.history} future={r.future} latestDate={r.latestDate} />
+              <p style={{ margin: '0 0 16px', fontSize: 15, color: '#6d7882' }}>실선: 최근 실측 ({recentHistory[0].날짜.getFullYear()}.{String(recentHistory[0].날짜.getMonth() + 1).padStart(2, '0')}–{r.latestDate.getFullYear()}.{String(r.latestDate.getMonth() + 1).padStart(2, '0')}) · 점선: 실행일 기준 AI 연속 예측 (~{fmtMonth(r.targetEnd)})</p>
+              <Chart history={recentHistory} future={r.future} latestDate={r.latestDate} />
               <div style={{ display: 'flex', gap: 20, marginTop: 16, fontSize: 15, color: '#464c53', flexWrap: 'wrap' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, height: 2, background: '#58616a' }}></span>과거 실제 가격</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, borderTop: '2.5px dashed #256ef4' }}></span>AI 연속 예측 곡선</span>
