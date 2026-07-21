@@ -18,7 +18,14 @@ deliverable/
 
 ---
 
-## 실행 방법 (서버 하나만 켜면 끝)
+## 접속 주소
+
+- **배포된 서비스(운영):** https://epfm.onrender.com/
+  - 예측 API(JSON): https://epfm.onrender.com/api/predict
+  - 상태 확인: https://epfm.onrender.com/api/health
+  - (Render 무료 플랜은 유휴 상태에서 첫 접속 시 서버가 깨어나며 수십 초 걸릴 수 있습니다.)
+
+## 로컬 실행 방법 (서버 하나만 켜면 끝)
 
 백엔드 서버가 API와 프론트엔드 화면을 함께 제공합니다.
 
@@ -29,6 +36,7 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 브라우저에서 **http://localhost:8000** 접속 → 대시보드가 열립니다.
+(내 컴퓨터에서 실행할 때의 주소이며, 운영 접속은 위 배포 주소를 사용하세요.)
 
 - 대시보드 화면:      http://localhost:8000/
 - 예측 API(JSON):     http://localhost:8000/api/predict
@@ -56,3 +64,7 @@ uvicorn app:app --host 0.0.0.0 --port 8000
   그 파일을 정적 호스팅하면 됩니다. 같은 서버로 배포하면(위 기본 방식) 수정 불필요.
 - `frontend/index.html`을 그냥 더블클릭(file://)하면 API를 호출하지 못해
   오류 화면이 나옵니다 — 반드시 백엔드 서버를 통해 여세요.
+- **현재 배포:** Render(https://epfm.onrender.com/)에 백엔드+프론트엔드를 한 서버로
+  배포했습니다. Render 시작 명령 예시: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+  (Render가 주입하는 `$PORT` 환경변수를 사용). 프론트엔드는 같은 오리진의 `/api`를
+  호출하므로 `window.__API_BASE__` 수정 없이 동작합니다.

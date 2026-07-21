@@ -1558,9 +1558,11 @@ function Metric({ label, value, delta, deltaLabel, down }) {
   );
 }
 
-/* ---------- time-axis line chart (history solid, forecast dashed) ---------- */
+/* ---------- time-axis line chart (history solid, forecast dashed) + hover tooltip ---------- */
 function Chart({ history, future, latestDate }) {
   const W = 760, H = 320, PL = 56, PR = 20, PT = 24, PB = 40;
+  const svgRef = React.useRef(null);
+  const [hover, setHover] = useState(null);
   const predSeries = [{ 날짜: latestDate, v: history[history.length - 1].y }, ...future.map((r) => ({ 날짜: r.날짜, v: r.예측가격 }))];
   const allV = history.map((h) => h.y).concat(predSeries.map((p) => p.v));
   const t0 = history[0].날짜.getTime();
@@ -1575,8 +1577,40 @@ function Chart({ history, future, latestDate }) {
   const ticks = Array.from({ length: nTicks + 1 }, (_, i) => Math.round(lo + (i / nTicks) * (hi - lo)));
   const years = [...new Set(history.concat(future).map((r) => r.날짜.getFullYear()))];
   const forecastX = x(latestDate);
+
+  // combined points for hover (past actual + forecast)
+  const pts = history.map((h) => ({ d: h.날짜, v: h.y, type: '실제' }))
+    .concat(future.map((f) => ({ d: f.날짜, v: f.예측가격, type: '예측' })));
+
+  const onMove = (e) => {
+    const svg = svgRef.current; if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const sx = ((e.clientX - rect.left) / rect.width) * W;
+    let best = null, bd = Infinity;
+    for (const p of pts) { const d = Math.abs(x(p.d) - sx); if (d < bd) { bd = d; best = p; } }
+    setHover(best);
+  };
+
+  let tip = null;
+  if (hover) {
+    const hx = x(hover.d), hy = y(hover.v);
+    const bw = 128, bh = 46;
+    const bx = Math.min(Math.max(hx - bw / 2, PL), W - PR - bw);
+    const by = hy - bh - 12 < PT ? hy + 12 : hy - bh - 12;
+    tip = (
+      <g style={{ pointerEvents: 'none' }}>
+        <line x1={hx} x2={hx} y1={PT} y2={H - PB} stroke="#58616a" strokeDasharray="3 3" />
+        <circle cx={hx} cy={hy} r="4.5" fill={hover.type === '예측' ? '#256ef4' : '#1e2124'} stroke="#fff" strokeWidth="1.5" />
+        <rect x={bx} y={by} width={bw} height={bh} rx="6" fill="#1e2124" />
+        <text x={bx + 12} y={by + 18} fontSize="12" fill="#b1b8be">{fmtMonth(hover.d)} · {hover.type}</text>
+        <text x={bx + 12} y={by + 36} fontSize="14" fontWeight="700" fill="#fff">{won(hover.v)}</text>
+      </g>
+    );
+  }
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="과거 실제 배출권 가격과 실행일 기준 향후 1년 예측 곡선">
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="과거 실제 배출권 가격과 실행일 기준 향후 1년 예측 곡선"
+      onMouseMove={onMove} onMouseLeave={() => setHover(null)} style={{ touchAction: 'none' }}>
       {ticks.map((t) => (
         <g key={t}>
           <line x1={PL} x2={W - PR} y1={y(t)} y2={y(t)} stroke="#e6e8ea" />
@@ -1593,7 +1627,9 @@ function Chart({ history, future, latestDate }) {
       })}
       <path d={path(history, 'y')} fill="none" stroke="#58616a" strokeWidth="2" />
       <path d={path(predSeries, 'v')} fill="none" stroke="#256ef4" strokeWidth="2.5" strokeDasharray="6 4" />
-      {future.filter((_, i) => i % 3 === 0).map((r, i) => <circle key={i} cx={x(r.날짜)} cy={y(r.예측가격)} r="2.5" fill="#256ef4" />)}
+      {future.map((r, i) => <circle key={i} cx={x(r.날짜)} cy={y(r.예측가격)} r="2" fill="#256ef4" />)}
+      {tip}
+      <rect x={PL} y={PT} width={W - PL - PR} height={H - PT - PB} fill="transparent" />
     </svg>
   );
 }
@@ -1698,9 +1734,9 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
     { key: 'season', label: '정산기 여부', align: 'center' },
   ];
   const rows = r.next1y.map((m) => ({
-    month: fmtMonth(m.날짜),
-    price: won(m.예측가격),
-    margin: Math.round(m.여유지수).toLocaleString('ko-KR') + ' 만톤',
+    month: fmtMonth(m.날짜).replace(/ /g, '\u00a0'),
+    price: won(m.예측가격).replace(/ /g, '\u00a0'),
+    margin: Math.round(m.여유지수).toLocaleString('ko-KR') + '\u00a0만톤',
     season: m.정산기
       ? <Badge variant="point" appearance="outline">정산기 (4–6월)</Badge>
       : <Badge variant="gray" appearance="outline">평달</Badge>,
@@ -1802,12 +1838,6 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
               <Card variant="info">
                 <b style={{ color: '#0b50d0' }}>향후 1년 변동 범위</b> — 최저 <b>{won(r.minP)}</b> ~ 최고 <b>{won(r.maxP)}</b>. 4–6월 정산기 매물 압박 요인이 반영되었습니다.
               </Card>
-
-              <h2 style={{ margin: '8px 0 0', fontSize: 19, fontWeight: 700 }}>월별 예측 명세표</h2>
-              <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #b1b8be', borderRadius: 8 }}>
-                <Table columns={columns} rows={rows} />
-              </div>
-              <Button variant="primary" size="large" style={{ width: '100%' }} onClick={downloadCsv}>1년 예측 결과 CSV 파일 다운로드</Button>
             </section>
 
             {/* right */}
@@ -1827,6 +1857,18 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
               </div>
             </section>
           </div>
+
+          <section style={{ marginTop: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 12 }}>
+              <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700 }}>월별 예측 명세표</h2>
+              <div style={{ width: 320, maxWidth: '100%' }}>
+                <Button variant="primary" size="large" style={{ width: '100%' }} onClick={downloadCsv}>1년 예측 결과 CSV 파일 다운로드</Button>
+              </div>
+            </div>
+            <div style={{ border: '1px solid #b1b8be', borderRadius: 8, overflow: 'hidden' }}>
+              <Table columns={columns} rows={rows} />
+            </div>
+          </section>
         </main>
       </div>
     </div>
