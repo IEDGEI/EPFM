@@ -1759,10 +1759,14 @@ function App() {
   React.useEffect(() => {
     let alive = true;
     if (!r) setStatus('loading');
-    getForecast({ mode, model, simMargin, simIntensity, seasonOption })
-      .then((res) => { if (alive) { setR(res); setStatus('ready'); } })
-      .catch((e) => { if (alive) { setDetail(e && e.message ? e.message : '연결 실패'); setStatus('error'); } });
-    return () => { alive = false; };
+    const params = { mode, model, simMargin, simIntensity, seasonOption };
+    const delay = r ? 150 : 0; // debounce control changes; first load fires immediately
+    const timer = setTimeout(() => {
+      getForecast(params)
+        .then((res) => { if (alive) { setR(res); setStatus('ready'); } })
+        .catch((e) => { if (alive) { setDetail(e && e.message ? e.message : '연결 실패'); setStatus('error'); } });
+    }, delay);
+    return () => { alive = false; clearTimeout(timer); };
     // eslint-disable-next-line
   }, [mode, model, simMargin, simIntensity, seasonOption, reloadKey]);
 
