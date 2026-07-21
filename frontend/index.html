@@ -1,0 +1,1837 @@
+<!-- @dsCard group="Emissions Dashboard" viewport="1280x820" name="배출권 가격 예측 MVP" subtitle="KRDS recreation of the Streamlit emissions-price MVP — live OLS / AI forecast" -->
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>발전부문 배출권 가격 예측 MVP</title>
+<style>
+
+/* tokens/fonts.css */
+/* Pretendard GOV — official webfont build for Korean public services (SIL OFL). Self-hosted 400/700 with jsDelivr CDN fallback for the full weight range. Family name "Pretendard GOV". */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-gov.min.css");
+@font-face{font-family:'Pretendard GOV';font-weight:400;font-style:normal;font-display:swap;src:local('Pretendard GOV Regular'),url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard-gov/dist/web/static/woff2/PretendardGOV-Regular.woff2') format('woff2');}
+@font-face{font-family:'Pretendard GOV';font-weight:700;font-style:normal;font-display:swap;src:local('Pretendard GOV Bold'),url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard-gov/dist/web/static/woff2/PretendardGOV-Bold.woff2') format('woff2');}
+:root{
+--krds-font-family-base:"Pretendard GOV","Pretendard",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+}
+
+/* tokens/colors.css */
+/* KRDS Standard Style color scale — 11 steps × color groups. Magic numbers: step 40=3:1, 50=4.5:1, 70=7:1, 90=15:1 contrast vs white. */
+:root{
+--krds-gray-0:#ffffff;--krds-gray-5:#f4f5f6;--krds-gray-10:#e6e8ea;--krds-gray-20:#cdd1d5;--krds-gray-30:#b1b8be;--krds-gray-40:#8a949e;--krds-gray-50:#6d7882;--krds-gray-60:#58616a;--krds-gray-70:#464c53;--krds-gray-80:#33363d;--krds-gray-90:#1e2124;--krds-gray-95:#131416;--krds-gray-100:#000000;
+--krds-primary-5:#ecf2fe;--krds-primary-10:#d8e5fd;--krds-primary-20:#b1cefb;--krds-primary-30:#86aff9;--krds-primary-40:#4c87f6;--krds-primary-50:#256ef4;--krds-primary-60:#0b50d0;--krds-primary-70:#083891;--krds-primary-80:#052561;--krds-primary-90:#03163a;--krds-primary-95:#020f27;
+--krds-secondary-5:#eef2f7;--krds-secondary-50:#346fb2;--krds-secondary-60:#1c589c;--krds-secondary-70:#063a74;--krds-secondary-80:#052b57;
+--krds-point-5:#fbeff0;--krds-point-50:#d63d4a;--krds-point-60:#ab2b36;--krds-point-70:#7a1f26;
+--krds-danger-5:#fdefec;--krds-danger-50:#de3412;--krds-danger-60:#bd2c0f;--krds-danger-70:#8a240f;
+--krds-warning-5:#fff3db;--krds-warning-30:#ffb114;--krds-warning-50:#9e6a00;--krds-warning-60:#8a5c00;--krds-warning-70:#614100;
+--krds-success-5:#eaf6ec;--krds-success-50:#228738;--krds-success-60:#267337;--krds-success-70:#285d33;
+--krds-information-5:#e7f4fe;--krds-information-50:#0b78cb;--krds-information-60:#096ab3;--krds-information-70:#085691;
+/* Semantic aliases */
+--krds-color-action:var(--krds-primary-50);
+--krds-color-action-hover:var(--krds-primary-60);
+--krds-color-action-pressed:var(--krds-primary-70);
+--krds-color-text-basic:var(--krds-gray-90);
+--krds-color-text-body:var(--krds-gray-70);
+--krds-color-text-subtle:var(--krds-gray-70);
+--krds-color-text-caption:var(--krds-gray-50);
+--krds-color-text-on-action:var(--krds-gray-0);
+--krds-color-text-primary:var(--krds-primary-60);
+--krds-color-surface-white:var(--krds-gray-0);
+--krds-color-surface-gray-subtler:var(--krds-gray-5);
+--krds-color-surface-primary-subtle:var(--krds-primary-5);
+--krds-color-surface-disabled:var(--krds-gray-20);
+--krds-color-border-gray:var(--krds-gray-60);
+--krds-color-border-gray-light:var(--krds-gray-30);
+--krds-color-border-gray-lighter:var(--krds-gray-20);
+--krds-color-divider:var(--krds-gray-10);
+--krds-color-text-disabled:var(--krds-gray-50);
+--krds-color-danger:var(--krds-danger-50);
+--krds-color-warning-bg:var(--krds-warning-30);
+--krds-color-warning-text:var(--krds-warning-50);
+--krds-color-success:var(--krds-success-50);
+--krds-color-information:var(--krds-information-50);
+--krds-color-point:var(--krds-point-50);
+}
+
+/* tokens/typography.css */
+/* KRDS 3-layer type scale — Display / Heading / Body. Two weights only (400/700), line-height 150%, letter-spacing 0 (Display & large headings 1px). */
+:root{
+--krds-font-weight-regular:400;
+--krds-font-weight-bold:700;
+--krds-line-height:1.5;
+--krds-letter-spacing-none:0;
+--krds-letter-spacing-display:1px;
+--krds-font-display-large:60px;--krds-font-display-medium:44px;--krds-font-display-small:36px;
+--krds-font-heading-xlarge:40px;--krds-font-heading-large:32px;--krds-font-heading-medium:24px;--krds-font-heading-small:19px;--krds-font-heading-xsmall:17px;--krds-font-heading-xxsmall:15px;
+--krds-font-body-large:19px;--krds-font-body-medium:17px;--krds-font-body-small:15px;--krds-font-body-xsmall:13px;
+/* Mobile heading sizes */
+--krds-font-heading-xlarge-mobile:28px;--krds-font-heading-large-mobile:24px;--krds-font-display-large-mobile:44px;
+/* User zoom levels (header 글자·화면 설정) */
+--krds-zoom-small:0.9;/* @kind other */
+--krds-zoom-medium:1;/* @kind other */
+--krds-zoom-large:1.1;/* @kind other */
+--krds-zoom-xlarge:1.3;/* @kind other */
+--krds-zoom-xxlarge:1.5;/* @kind other */
+}
+
+/* tokens/spacing.css */
+/* KRDS 8-pt spacing grid, radius scale, component size heights, icon sizes, layout. */
+:root{
+--krds-padding-1:2px;--krds-padding-2:4px;--krds-padding-3:8px;--krds-padding-4:10px;--krds-padding-5:12px;--krds-padding-6:16px;--krds-padding-7:20px;--krds-padding-8:24px;--krds-padding-9:32px;--krds-padding-10:40px;
+--krds-radius-xsmall:2px;--krds-radius-small:4px;--krds-radius-medium:6px;--krds-radius-medium3:8px;--krds-radius-large:10px;--krds-radius-xlarge:12px;--krds-radius-max:1000px;
+--krds-size-height-2:16px;--krds-size-height-3:20px;--krds-size-height-4:24px;--krds-size-height-5:32px;--krds-size-height-6:40px;--krds-size-height-7:48px;--krds-size-height-8:56px;--krds-size-height-9:64px;--krds-size-height-10:72px;--krds-size-height-11:80px;
+--krds-icon-size-small:16px;--krds-icon-size-medium:20px;--krds-icon-size-large:24px;
+--krds-contents-size:1200px;
+--krds-gutter:24px;
+--krds-modal-small:400px;--krds-modal-medium:560px;--krds-modal-large:760px;
+}
+
+/* tokens/effects.css */
+/* Shadows are restricted to focus ring, dropdown/tooltip and modal. Everything else is flat + 1px border. */
+:root{
+--krds-box-shadow-outline:0 0 0 4px var(--krds-primary-50);
+--krds-box-shadow-outline-inset:inset 0 0 0 2px var(--krds-primary-50);
+--krds-shadow-drop:0 0.2rem 0 0 rgba(0,0,0,0.1),0 0.4rem 0.8rem 0 rgba(0,0,0,0.1);
+--krds-shadow-modal:0 0.2rem 0 0 rgba(0,0,0,0.1),0 0.4rem 0.8rem 0 rgba(0,0,0,0.1);
+--krds-transition-base:0.4s ease-in-out;/* @kind other */
+--krds-transition-fade:opacity 0.4s linear;/* @kind other */
+--krds-transition-collapse:max-height 0.4s ease;/* @kind other */
+--krds-transition-collapse-width:width 0.4s ease;/* @kind other */
+}
+@media (prefers-reduced-motion:reduce){:root{--krds-transition-base:0s;/* @kind other */--krds-transition-fade:opacity 0s;/* @kind other */--krds-transition-collapse:max-height 0s;/* @kind other */--krds-transition-collapse-width:width 0s;/* @kind other */}}
+
+/* tokens/base.css */
+/* Base document defaults — Body medium 17px/400/1.5 on white, government-blue links. */
+body{margin:0;font-family:var(--krds-font-family-base);font-size:var(--krds-font-body-medium);font-weight:var(--krds-font-weight-regular);line-height:var(--krds-line-height);letter-spacing:var(--krds-letter-spacing-none);color:var(--krds-color-text-basic);background:var(--krds-color-surface-white)}
+a{color:var(--krds-primary-50);text-decoration:underline}
+a:hover{color:var(--krds-primary-60)}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--krds-box-shadow-outline)}
+
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script>
+/* @ds-bundle: {"format":4,"namespace":"KRDSDesignSystem_fd0bab","components":[{"name":"Button","sourcePath":"components/actions/Button.jsx"},{"name":"Table","sourcePath":"components/content/Table.jsx"},{"name":"Badge","sourcePath":"components/feedback/Badge.jsx"},{"name":"Dialog","sourcePath":"components/feedback/Dialog.jsx"},{"name":"Input","sourcePath":"components/forms/Input.jsx"},{"name":"Tabs","sourcePath":"components/navigation/Tabs.jsx"},{"name":"Card","sourcePath":"components/surfaces/Card.jsx"}],"sourceHashes":{"components/actions/Button.jsx":"dc86d67e5e05","components/content/Table.jsx":"37ffd48aedd7","components/feedback/Badge.jsx":"229d8f4e7ba0","components/feedback/Dialog.jsx":"d7de662f9a4d","components/forms/Input.jsx":"9b3638b90096","components/navigation/Tabs.jsx":"ea526c57ad9a","components/surfaces/Card.jsx":"e70dd2bc8208","ui_kits/emissions-dashboard/data.js":"72620f798b70","ui_kits/emissions-dashboard/models.js":"112ebb2f56f9"},"inlinedExternals":[],"unexposedExports":[]} */
+
+(() => {
+
+const __ds_ns = (window.KRDSDesignSystem_fd0bab = window.KRDSDesignSystem_fd0bab || {});
+
+const __ds_scope = {};
+
+(__ds_ns.__errors = __ds_ns.__errors || []);
+
+// components/actions/Button.jsx
+try { (() => {
+const {
+  useState
+} = React;
+const SIZES = {
+  xsmall: {
+    height: 32,
+    radius: 4,
+    pad: '0 10px',
+    font: 15
+  },
+  small: {
+    height: 40,
+    radius: 6,
+    pad: '0 12px',
+    font: 15
+  },
+  medium: {
+    height: 48,
+    radius: 6,
+    pad: '0 16px',
+    font: 17
+  },
+  large: {
+    height: 56,
+    radius: 8,
+    pad: '0 20px',
+    font: 19
+  },
+  xlarge: {
+    height: 64,
+    radius: 8,
+    pad: '0 24px',
+    font: 19
+  }
+};
+function Button({
+  variant = 'primary',
+  size = 'medium',
+  disabled = false,
+  children,
+  onClick,
+  style
+}) {
+  const [hover, setHover] = useState(false);
+  const [active, setActive] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const s = SIZES[size] || SIZES.medium;
+  let bg, fg, border;
+  if (disabled) {
+    bg = 'var(--krds-gray-20)';
+    fg = 'var(--krds-gray-50)';
+    border = '1px solid var(--krds-gray-20)';
+  } else if (variant === 'primary') {
+    bg = active ? 'var(--krds-primary-70)' : hover ? 'var(--krds-primary-60)' : 'var(--krds-primary-50)';
+    fg = '#fff';
+    border = '1px solid transparent';
+  } else if (variant === 'secondary') {
+    bg = active ? 'var(--krds-primary-10)' : 'var(--krds-primary-5)';
+    fg = 'var(--krds-primary-60)';
+    border = '1px solid var(--krds-primary-50)';
+  } else if (variant === 'tertiary') {
+    bg = hover ? 'var(--krds-gray-5)' : 'transparent';
+    fg = 'var(--krds-gray-90)';
+    border = '1px solid var(--krds-gray-60)';
+  } else if (variant === 'link') {
+    bg = 'transparent';
+    fg = 'var(--krds-primary-50)';
+    border = '1px solid transparent';
+  } else {
+    /* text */
+    bg = hover ? 'var(--krds-gray-5)' : 'transparent';
+    fg = 'var(--krds-gray-90)';
+    border = '1px solid transparent';
+  }
+  return /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: disabled,
+    onClick: onClick,
+    onMouseEnter: () => setHover(true),
+    onMouseLeave: () => {
+      setHover(false);
+      setActive(false);
+    },
+    onMouseDown: () => setActive(true),
+    onMouseUp: () => setActive(false),
+    onFocus: () => setFocus(true),
+    onBlur: () => setFocus(false),
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      height: variant === 'text' || variant === 'link' ? 'auto' : s.height,
+      padding: variant === 'text' || variant === 'link' ? '2px 4px' : s.pad,
+      borderRadius: s.radius,
+      border,
+      background: bg,
+      color: fg,
+      fontFamily: 'var(--krds-font-family-base)',
+      fontSize: s.font,
+      fontWeight: 400,
+      lineHeight: 1.5,
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      textDecoration: variant === 'link' ? 'underline' : 'none',
+      boxShadow: focus ? 'var(--krds-box-shadow-outline)' : 'none',
+      outline: 'none',
+      transition: 'background 0.15s ease',
+      ...style
+    }
+  }, children);
+}
+Object.assign(__ds_scope, { Button });
+})(); } catch (e) { __ds_ns.__errors.push({ path: "components/actions/Button.jsx", error: String((e && e.message) || e) }); }
+
+// components/content/Table.jsx
+try { (() => {
+function Table({
+  columns = [],
+  rows = [],
+  caption
+}) {
+  return /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: '100%',
+      borderCollapse: 'collapse',
+      fontFamily: 'var(--krds-font-family-base)',
+      fontSize: 17,
+      lineHeight: 1.5,
+      color: 'var(--krds-gray-90)',
+      borderTop: '2px solid var(--krds-gray-90)'
+    }
+  }, caption && /*#__PURE__*/React.createElement("caption", {
+    style: {
+      textAlign: 'left',
+      fontSize: 15,
+      color: 'var(--krds-gray-50)',
+      padding: '0 0 8px'
+    }
+  }, caption), /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, columns.map(c => /*#__PURE__*/React.createElement("th", {
+    key: c.key,
+    scope: "col",
+    style: {
+      background: 'var(--krds-gray-5)',
+      fontWeight: 700,
+      textAlign: c.align || 'left',
+      padding: '12px 16px',
+      borderBottom: '1px solid var(--krds-gray-30)'
+    }
+  }, c.label)))), /*#__PURE__*/React.createElement("tbody", null, rows.map((r, i) => /*#__PURE__*/React.createElement("tr", {
+    key: i
+  }, columns.map(c => /*#__PURE__*/React.createElement("td", {
+    key: c.key,
+    style: {
+      padding: '12px 16px',
+      textAlign: c.align || 'left',
+      borderBottom: '1px solid var(--krds-gray-10)',
+      color: 'var(--krds-gray-70)'
+    }
+  }, r[c.key]))))));
+}
+Object.assign(__ds_scope, { Table });
+})(); } catch (e) { __ds_ns.__errors.push({ path: "components/content/Table.jsx", error: String((e && e.message) || e) }); }
+
+// components/feedback/Badge.jsx
+try { (() => {
+const COLORS = {
+  primary: {
+    bg: 'var(--krds-primary-50)',
+    fg: '#fff',
+    line: 'var(--krds-primary-50)',
+    outlineFg: 'var(--krds-primary-60)'
+  },
+  secondary: {
+    bg: 'var(--krds-secondary-70)',
+    fg: '#fff',
+    line: 'var(--krds-secondary-80)',
+    outlineFg: 'var(--krds-secondary-80)'
+  },
+  gray: {
+    bg: 'var(--krds-gray-50)',
+    fg: '#fff',
+    line: 'var(--krds-gray-70)',
+    outlineFg: 'var(--krds-gray-70)'
+  },
+  point: {
+    bg: 'var(--krds-point-50)',
+    fg: '#fff',
+    line: 'var(--krds-point-60)',
+    outlineFg: 'var(--krds-point-60)'
+  },
+  danger: {
+    bg: 'var(--krds-danger-50)',
+    fg: '#fff',
+    line: 'var(--krds-danger-60)',
+    outlineFg: 'var(--krds-danger-60)'
+  },
+  warning: {
+    bg: 'var(--krds-warning-30)',
+    fg: 'var(--krds-gray-90)',
+    line: 'var(--krds-warning-60)',
+    outlineFg: 'var(--krds-warning-60)'
+  },
+  success: {
+    bg: 'var(--krds-success-50)',
+    fg: '#fff',
+    line: 'var(--krds-success-60)',
+    outlineFg: 'var(--krds-success-60)'
+  },
+  information: {
+    bg: 'var(--krds-information-50)',
+    fg: '#fff',
+    line: 'var(--krds-information-60)',
+    outlineFg: 'var(--krds-information-60)'
+  },
+  disabled: {
+    bg: 'var(--krds-gray-40)',
+    fg: '#fff',
+    line: 'var(--krds-gray-50)',
+    outlineFg: 'var(--krds-gray-50)'
+  }
+};
+function Badge({
+  variant = 'primary',
+  appearance = 'filled',
+  children,
+  style
+}) {
+  const c = COLORS[variant] || COLORS.primary;
+  const filled = appearance === 'filled';
+  return /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      height: 24,
+      padding: '0 8px',
+      borderRadius: 4,
+      fontFamily: 'var(--krds-font-family-base)',
+      fontSize: 15,
+      fontWeight: 400,
+      lineHeight: 1.5,
+      background: filled ? c.bg : 'transparent',
+      color: filled ? c.fg : c.outlineFg,
+      border: filled ? '1px solid transparent' : `1px solid ${c.line}`,
+      boxSizing: 'border-box',
+      whiteSpace: 'nowrap',
+      ...style
+    }
+  }, children);
+}
+Object.assign(__ds_scope, { Badge });
+})(); } catch (e) { __ds_ns.__errors.push({ path: "components/feedback/Badge.jsx", error: String((e && e.message) || e) }); }
+
+// components/feedback/Dialog.jsx
+try { (() => {
+const WIDTHS = {
+  small: 400,
+  medium: 560,
+  large: 760
+};
+function Dialog({
+  open = true,
+  title,
+  children,
+  actions,
+  size = 'medium',
+  onClose,
+  inline = false,
+  style
+}) {
+  if (!open) return null;
+  const panel = /*#__PURE__*/React.createElement("div", {
+    role: "dialog",
+    "aria-modal": !inline,
+    "aria-label": typeof title === 'string' ? title : undefined,
+    style: {
+      width: '100%',
+      maxWidth: WIDTHS[size] || WIDTHS.medium,
+      minHeight: inline ? 0 : 264,
+      background: '#fff',
+      borderRadius: 12,
+      padding: 40,
+      boxSizing: 'border-box',
+      boxShadow: 'var(--krds-shadow-modal)',
+      fontFamily: 'var(--krds-font-family-base)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 16,
+      ...style
+    }
+  }, title && /*#__PURE__*/React.createElement("h2", {
+    style: {
+      margin: 0,
+      fontSize: 24,
+      fontWeight: 700,
+      lineHeight: 1.5,
+      color: 'var(--krds-gray-90)'
+    }
+  }, title), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      fontSize: 17,
+      lineHeight: 1.5,
+      color: 'var(--krds-gray-70)'
+    }
+  }, children), actions && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end'
+    }
+  }, actions));
+  if (inline) return panel;
+  return /*#__PURE__*/React.createElement("div", {
+    onClick: e => {
+      if (e.target === e.currentTarget && onClose) onClose();
+    },
+    style: {
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.5)',
+      zIndex: 1000,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24
+    }
+  }, panel);
+}
+Object.assign(__ds_scope, { Dialog });
+})(); } catch (e) { __ds_ns.__errors.push({ path: "components/feedback/Dialog.jsx", error: String((e && e.message) || e) }); }
+
+// components/forms/Input.jsx
+try { (() => {
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+const {
+  useState
+} = React;
+const SIZES = {
+  xsmall: {
+    height: 32,
+    radius: 4,
+    pad: '0 12px',
+    font: 13
+  },
+  small: {
+    height: 40,
+    radius: 6,
+    pad: '0 16px',
+    font: 15
+  },
+  medium: {
+    height: 48,
+    radius: 6,
+    pad: '0 16px',
+    font: 17
+  },
+  large: {
+    height: 56,
+    radius: 8,
+    pad: '0 16px',
+    font: 19
+  },
+  xlarge: {
+    height: 80,
+    radius: 10,
+    pad: '0 24px',
+    font: 24
+  }
+};
+function Input({
+  label,
+  size = 'large',
+  required = false,
+  error,
+  helper,
+  disabled = false,
+  placeholder,
+  value,
+  defaultValue,
+  onChange,
+  multiline = false,
+  type = 'text',
+  style
+}) {
+  const [focus, setFocus] = useState(false);
+  const s = SIZES[size] || SIZES.large;
+  const border = error ? '2px solid var(--krds-danger-50)' : disabled ? '1px solid var(--krds-gray-30)' : '1px solid var(--krds-gray-60)';
+  const shared = {
+    boxSizing: 'border-box',
+    width: '100%',
+    border,
+    borderRadius: s.radius,
+    background: disabled ? 'var(--krds-gray-20)' : '#fff',
+    color: disabled ? 'var(--krds-gray-50)' : 'var(--krds-gray-70)',
+    fontFamily: 'var(--krds-font-family-base)',
+    fontSize: s.font,
+    fontWeight: size === 'xlarge' ? 700 : 400,
+    lineHeight: 1.5,
+    outline: 'none',
+    boxShadow: focus ? 'var(--krds-box-shadow-outline)' : 'none',
+    cursor: disabled ? 'not-allowed' : 'text'
+  };
+  const props = {
+    placeholder,
+    value,
+    defaultValue,
+    disabled,
+    'aria-required': required || undefined,
+    'aria-invalid': error ? 'true' : undefined,
+    onChange: onChange && (e => onChange(e.target.value)),
+    onFocus: () => setFocus(true),
+    onBlur: () => setFocus(false)
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8,
+      fontFamily: 'var(--krds-font-family-base)',
+      ...style
+    }
+  }, label && /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 17,
+      fontWeight: 700,
+      lineHeight: 1.5,
+      color: 'var(--krds-gray-90)'
+    }
+  }, label, required && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--krds-danger-50)',
+      marginLeft: 4
+    },
+    "aria-hidden": "true"
+  }, "*")), multiline ? /*#__PURE__*/React.createElement("textarea", _extends({}, props, {
+    rows: 4,
+    style: {
+      ...shared,
+      padding: '12px 16px',
+      height: 144,
+      resize: 'vertical'
+    }
+  })) : /*#__PURE__*/React.createElement("input", _extends({}, props, {
+    type: type,
+    style: {
+      ...shared,
+      padding: s.pad,
+      height: s.height
+    }
+  })), error && /*#__PURE__*/React.createElement("p", {
+    role: "alert",
+    style: {
+      margin: 0,
+      fontSize: 15,
+      lineHeight: 1.5,
+      color: 'var(--krds-danger-50)'
+    }
+  }, error), !error && helper && /*#__PURE__*/React.createElement("p", {
+    style: {
+      margin: 0,
+      fontSize: 15,
+      lineHeight: 1.5,
+      color: 'var(--krds-gray-50)'
+    }
+  }, helper));
+}
+Object.assign(__ds_scope, { Input });
+})(); } catch (e) { __ds_ns.__errors.push({ path: "components/forms/Input.jsx", error: String((e && e.message) || e) }); }
+
+// components/navigation/Tabs.jsx
+try { (() => {
+const {
+  useState
+} = React;
+function Tabs({
+  items = [],
+  activeId,
+  defaultActiveId,
+  onChange,
+  style
+}) {
+  const [internal, setInternal] = useState(defaultActiveId ?? (items[0] && items[0].id));
+  const current = activeId !== undefined ? activeId : internal;
+  const select = id => {
+    setInternal(id);
+    onChange && onChange(id);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: style
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "tablist",
+    style: {
+      display: 'flex',
+      gap: 24,
+      borderBottom: '1px solid var(--krds-gray-20)',
+      fontFamily: 'var(--krds-font-family-base)'
+    }
+  }, items.map(it => {
+    const sel = it.id === current;
+    return /*#__PURE__*/React.createElement("button", {
+      key: it.id,
+      role: "tab",
+      type: "button",
+      "aria-selected": sel,
+      onClick: () => select(it.id),
+      onKeyDown: e => {
+        const i = items.findIndex(x => x.id === current);
+        if (e.key === 'ArrowRight') select(items[(i + 1) % items.length].id);
+        if (e.key === 'ArrowLeft') select(items[(i - 1 + items.length) % items.length].id);
+      },
+      style: {
+        appearance: 'none',
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        padding: '12px 4px',
+        marginBottom: -1,
+        fontFamily: 'inherit',
+        fontSize: 17,
+        lineHeight: 1.5,
+        fontWeight: sel ? 700 : 400,
+        color: sel ? 'var(--krds-primary-50)' : 'var(--krds-gray-70)',
+        borderBottom: sel ? '2px solid var(--krds-primary-50)' : '2px solid transparent'
+      }
+    }, it.label);
+  })), items.map(it => it.id === current && it.content ? /*#__PURE__*/React.createElement("div", {
+    key: it.id,
+    role: "tabpanel",
+    style: {
+      padding: '24px 0',
+      fontFamily: 'var(--krds-font-family-base)',
+      fontSize: 17,
+      lineHeight: 1.5,
+      color: 'var(--krds-gray-70)'
+    }
+  }, it.content) : null));
+}
+Object.assign(__ds_scope, { Tabs });
+})(); } catch (e) { __ds_ns.__errors.push({ path: "components/navigation/Tabs.jsx", error: String((e && e.message) || e) }); }
+
+// components/surfaces/Card.jsx
+try { (() => {
+function Card({
+  variant = 'panel',
+  title,
+  children,
+  style
+}) {
+  const info = variant === 'info';
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: info ? 'var(--krds-primary-5)' : '#fff',
+      border: info ? 'none' : '1px solid var(--krds-gray-30)',
+      borderRadius: 8,
+      padding: info ? '16px 24px' : 24,
+      fontFamily: 'var(--krds-font-family-base)',
+      fontSize: 17,
+      lineHeight: 1.5,
+      color: 'var(--krds-gray-90)',
+      boxSizing: 'border-box',
+      ...style
+    }
+  }, title && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 19,
+      fontWeight: 700,
+      marginBottom: 8,
+      color: info ? 'var(--krds-primary-60)' : 'var(--krds-gray-90)'
+    }
+  }, title), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: info ? 'var(--krds-gray-90)' : 'var(--krds-gray-70)'
+    }
+  }, children));
+}
+Object.assign(__ds_scope, { Card });
+})(); } catch (e) { __ds_ns.__errors.push({ path: "components/surfaces/Card.jsx", error: String((e && e.message) || e) }); }
+
+// ui_kits/emissions-dashboard/data.js
+try { (() => {
+// Real master dataset — parsed from 발전부문_배출권_분석_마스터셋.csv (국립창원대 identity 팀).
+// All columns preserved so models.js can auto-detect features the same way the original
+// Streamlit load_data() does (총_할당량/총_배출량 → 발전부문_수급과부족지수 → fallback).
+// Column order: 년도, 월, 원단위, 월별가중치, 한수원_월별할당량, 수자원_월별배출량, 남부발전_월별Scope3, KRX_배출권가격, 동서발전_2023보정배출량.
+window.MASTER = [{
+  "년도": 2021,
+  "월": 1,
+  "원단위": 0.674,
+  "월별가중치": 0.0794155767644633,
+  "한수원_월별할당량": 233638.32378932484,
+  "수자원_월별배출량": 61086.22340049488,
+  "남부발전_월별Scope3": 595734.5990338165,
+  "KRX_배출권가격": 20292.5,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 2,
+  "원단위": 0.704,
+  "월별가중치": 0.08295039472133851,
+  "한수원_월별할당량": 244037.65570873098,
+  "수자원_월별배출량": 63805.19476846942,
+  "남부발전_월별Scope3": 622250.9758454106,
+  "KRX_배출권가격": 19244.444444444445,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 3,
+  "원단위": 0.696,
+  "월별가중치": 0.08200777659950512,
+  "한수원_월별할당량": 241264.50053022266,
+  "수자원_월별배출량": 63080.135737009536,
+  "남부발전_월별Scope3": 615179.9420289855,
+  "KRX_배출권가격": 19479.545454545456,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 4,
+  "원단위": 0.692,
+  "월별가중치": 0.08153646753858843,
+  "한수원_월별할당량": 239877.92294096854,
+  "수자원_월별배출량": 62717.6062212796,
+  "남부발전_월별Scope3": 611644.4251207729,
+  "KRX_배출권가격": 16836.363636363636,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 5,
+  "원단위": 0.706,
+  "월별가중치": 0.08318604925179686,
+  "한수원_월별할당량": 244730.94450335807,
+  "수자원_월별배출량": 63986.45952633439,
+  "남부발전_월별Scope3": 624018.7342995169,
+  "KRX_배출권가격": 18123.684210526317,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 6,
+  "원단위": 0.708,
+  "월별가중치": 0.0834217037822552,
+  "한수원_월별할당량": 245424.23329798513,
+  "수자원_월별배출량": 64167.72428419936,
+  "남부발전_월별Scope3": 625786.4927536232,
+  "KRX_배출권가격": 16186.363636363636,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 7,
+  "원단위": 0.688,
+  "월별가중치": 0.08106515847767172,
+  "한수원_월별할당량": 238491.34535171435,
+  "수자원_월별배출량": 62355.076705549654,
+  "남부발전_월별Scope3": 608108.9082125602,
+  "KRX_배출권가격": 19731.81818181818,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 8,
+  "원단위": 0.717,
+  "월별가중치": 0.08448214916931777,
+  "한수원_월별할당량": 248544.03287380698,
+  "수자원_월별배출량": 64983.41569459173,
+  "남부발전_월별Scope3": 633741.4057971014,
+  "KRX_배출권가격": 25595.238095238095,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 9,
+  "원단위": 0.714,
+  "월별가중치": 0.08412866737363026,
+  "한수원_월별할당량": 247504.09968186638,
+  "수자원_월별배출량": 64711.51855779427,
+  "남부발전_월별Scope3": 631089.768115942,
+  "KRX_배출권가격": 28778.947368421053,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 10,
+  "원단위": 0.712,
+  "월별가중치": 0.08389301284317191,
+  "한수원_월별할당량": 246810.81088723932,
+  "수자원_월별배출량": 64530.253799929305,
+  "남부발전_월별Scope3": 629322.0096618357,
+  "KRX_배출권가격": 30297.36842105263,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 11,
+  "원단위": 0.719,
+  "월별가중치": 0.08471780369977612,
+  "한수원_월별할당량": 249237.32166843404,
+  "수자원_월별배출량": 65164.68045245669,
+  "남부발전_월별Scope3": 635509.1642512077,
+  "KRX_배출권가격": 32011.363636363636,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2021,
+  "월": 12,
+  "원단위": 0.757,
+  "월별가중치": 0.08919523977848474,
+  "한수원_월별할당량": 262409.8087663485,
+  "수자원_월별배출량": 68608.71085189113,
+  "남부발전_월별Scope3": 669096.5748792271,
+  "KRX_배출권가격": 34265.90909090909,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 1,
+  "원단위": 0.713,
+  "월별가중치": 0.083646175504458,
+  "한수원_월별할당량": 246084.62259502584,
+  "수자원_월별배출량": 67648.17526982637,
+  "남부발전_월별Scope3": 653809.5404739559,
+  "KRX_배출권가격": 32700,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 2,
+  "원단위": 0.684,
+  "월별가중치": 0.08024401689347725,
+  "한수원_월별할당량": 236075.57062412016,
+  "수자원_월별배출량": 64896.70671046458,
+  "남부발전_월별Scope3": 627217.0065696856,
+  "KRX_배출권가격": 32700,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 3,
+  "원단위": 0.654,
+  "월별가중치": 0.07672454246832475,
+  "한수원_월별할당량": 225721.37893007984,
+  "수자원_월별배출량": 62050.359924917895,
+  "남부발전_월별Scope3": 599707.488737682,
+  "KRX_배출권가격": 25628.571428571428,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 4,
+  "원단위": 0.702,
+  "월별가중치": 0.08235570154856875,
+  "한수원_월별할당량": 242288.08564054436,
+  "수자원_월별배출량": 66604.51478179259,
+  "남부발전_월별Scope3": 643722.7172688879,
+  "KRX_배출권가격": 22404.761904761905,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 5,
+  "원단위": 0.693,
+  "월별가중치": 0.081299859221023,
+  "한수원_월별할당량": 239181.82813233224,
+  "수자원_월별배출량": 65750.61074612857,
+  "남부발전_월별Scope3": 635469.8619192867,
+  "KRX_배출권가격": 21800,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 6,
+  "원단위": 0.733,
+  "월별가중치": 0.08599249178789302,
+  "한수원_월별할당량": 252987.4170577194,
+  "수자원_월별배출량": 69545.73979352418,
+  "남부발전_월별Scope3": 672149.2190286252,
+  "KRX_배출권가격": 18010,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 7,
+  "원단위": 0.741,
+  "월별가중치": 0.08693101830126702,
+  "한수원_월별할당량": 255748.53484279686,
+  "수자원_월별배출량": 70304.7656030033,
+  "남부발전_월별Scope3": 679485.0904504928,
+  "KRX_배출권가격": 25271.428571428572,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 8,
+  "원단위": 0.755,
+  "월별가중치": 0.08857343969967152,
+  "한수원_월별할당량": 260580.49096668232,
+  "수자원_월별배출량": 71633.06076959174,
+  "남부발전_월별Scope3": 692322.8654387612,
+  "KRX_배출권가격": 27661.363636363636,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 9,
+  "원단위": 0.731,
+  "월별가중치": 0.08575786015954952,
+  "한수원_월별할당량": 252297.13761145005,
+  "수자원_월별배출량": 69355.9833411544,
+  "남부발전_월별Scope3": 670315.2511731582,
+  "KRX_배출권가격": 25667.5,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 10,
+  "원단위": 0.684,
+  "월별가중치": 0.08024401689347725,
+  "한수원_월별할당량": 236075.57062412016,
+  "수자원_월별배출량": 64896.70671046458,
+  "남부발전_월별Scope3": 627217.0065696856,
+  "KRX_배출권가격": 22944.736842105263,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 11,
+  "원단위": 0.689,
+  "월별가중치": 0.08083059596433599,
+  "한수원_월별할당량": 237801.26923979353,
+  "수자원_월별배출량": 65371.09784138902,
+  "남부발전_월별Scope3": 631801.9262083529,
+  "KRX_배출권가격": 18547.727272727272,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2022,
+  "월": 12,
+  "원단위": 0.745,
+  "월별가중치": 0.08740028155795403,
+  "한수원_월별할당량": 257129.09373533557,
+  "수자원_월별배출량": 70684.27850774286,
+  "남부발전_월별Scope3": 683153.0261614267,
+  "KRX_배출권가격": 14804.761904761905,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 1,
+  "원단위": 0.76,
+  "월별가중치": 0.09047619047619047,
+  "한수원_월별할당량": 266178.32857142854,
+  "수자원_월별배출량": 71851.03333333333,
+  "남부발전_월별Scope3": 607014.8952380952,
+  "KRX_배출권가격": 16050,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 2,
+  "원단위": 0.738,
+  "월별가중치": 0.08785714285714286,
+  "한수원_월별할당량": 258473.16642857142,
+  "수자원_월별배출량": 69771.135,
+  "남부발전_월별Scope3": 589443.4114285714,
+  "KRX_배출권가격": 16050,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 3,
+  "원단위": 0.726,
+  "월별가중치": 0.08642857142857142,
+  "한수원_월별할당량": 254270.3507142857,
+  "수자원_월별배출량": 68636.64499999999,
+  "남부발전_월별Scope3": 579858.9657142857,
+  "KRX_배출권가격": 12800,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 4,
+  "원단위": 0.674,
+  "월별가중치": 0.08023809523809523,
+  "한수원_월별할당량": 236058.14928571426,
+  "수자원_월별배출량": 63720.52166666666,
+  "남부발전_월별Scope3": 538326.3676190476,
+  "KRX_배출권가격": 14650,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 5,
+  "원단위": 0.686,
+  "월별가중치": 0.08166666666666667,
+  "한수원_월별할당량": 240260.965,
+  "수자원_월별배출량": 64855.011666666665,
+  "남부발전_월별Scope3": 547910.8133333334,
+  "KRX_배출권가격": 11250,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 6,
+  "원단위": 0.689,
+  "월별가중치": 0.08202380952380951,
+  "한수원_월별할당량": 241311.6689285714,
+  "수자원_월별배출량": 65138.634166666656,
+  "남부발전_월별Scope3": 550306.9247619046,
+  "KRX_배출권가격": 11140.47619047619,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 7,
+  "원단위": 0.7,
+  "월별가중치": 0.08333333333333333,
+  "한수원_월별할당량": 245164.25,
+  "수자원_월별배출량": 66178.58333333333,
+  "남부발전_월별Scope3": 559092.6666666666,
+  "KRX_배출권가격": 10457.142857142857,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 8,
+  "원단위": 0.69,
+  "월별가중치": 0.08214285714285713,
+  "한수원_월별할당량": 241661.90357142853,
+  "수자원_월별배출량": 65233.17499999999,
+  "남부발전_월별Scope3": 551105.6285714285,
+  "KRX_배출권가격": 8322.727272727272,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 9,
+  "원단위": 0.696,
+  "월별가중치": 0.08285714285714285,
+  "한수원_월별할당량": 243763.3114285714,
+  "수자원_월별배출량": 65800.42,
+  "남부발전_월별Scope3": 555897.8514285714,
+  "KRX_배출권가격": 10460.526315789473,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 10,
+  "원단위": 0.692,
+  "월별가중치": 0.08238095238095237,
+  "한수원_월별할당량": 242362.37285714285,
+  "수자원_월별배출량": 65422.25666666666,
+  "남부발전_월별Scope3": 552703.0361904762,
+  "KRX_배출권가격": 11731.578947368422,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 11,
+  "원단위": 0.658,
+  "월별가중치": 0.07833333333333334,
+  "한수원_월별할당량": 230454.39500000002,
+  "수자원_월별배출량": 62207.86833333334,
+  "남부발전_월별Scope3": 525547.1066666667,
+  "KRX_배출권가격": 9495,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2023,
+  "월": 12,
+  "원단위": 0.691,
+  "월별가중치": 0.08226190476190476,
+  "한수원_월별할당량": 242012.1382142857,
+  "수자원_월별배출량": 65327.71583333333,
+  "남부발전_월별Scope3": 551904.3323809523,
+  "KRX_배출권가격": 9035.263157894737,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 1,
+  "원단위": 0.681,
+  "월별가중치": 0.08411561264822134,
+  "한수원_월별할당량": 229073.4778903162,
+  "수자원_월별배출량": 67533.98604249011,
+  "남부발전_월별Scope3": 512174.5820158103,
+  "KRX_배출권가격": 8610,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 2,
+  "원단위": 0.703,
+  "월별가중치": 0.08683300395256917,
+  "한수원_월별할당량": 236473.79582509882,
+  "수자원_월별배출량": 69715.70071640317,
+  "남부발전_월별Scope3": 528720.6037549407,
+  "KRX_배출권가격": 8610,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 3,
+  "원단위": 0.696,
+  "월별가중치": 0.0859683794466403,
+  "한수원_월별할당량": 234119.14920948615,
+  "수자원_월별배출량": 69021.51877470355,
+  "남부발전_월별Scope3": 523455.96047430823,
+  "KRX_배출권가격": 8610,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 4,
+  "원단위": 0.693,
+  "월별가중치": 0.08559782608695651,
+  "한수원_월별할당량": 233110.01494565216,
+  "수자원_월별배출량": 68724.01222826086,
+  "남부발전_월별Scope3": 521199.68478260865,
+  "KRX_배출권가격": 8610,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 5,
+  "원단위": 0.637,
+  "월별가중치": 0.0786808300395257,
+  "한수원_월별할당량": 214272.842020751,
+  "수자원_월별배출량": 63170.55669466403,
+  "남부발전_월별Scope3": 479082.53853754944,
+  "KRX_배출권가격": 8610,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 6,
+  "원단위": 0.646,
+  "월별가중치": 0.07979249011857707,
+  "한수원_월별할당량": 217300.24481225296,
+  "수자원_월별배출량": 64063.076333992096,
+  "남부발전_월별Scope3": 485851.3656126482,
+  "KRX_배출권가격": 8640.526315789473,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 7,
+  "원단위": 0.639,
+  "월별가중치": 0.07892786561264822,
+  "한수원_월별할당량": 214945.59819664032,
+  "수자원_월별배출량": 63368.894392292495,
+  "남부발전_월별Scope3": 480586.7223320158,
+  "KRX_배출권가격": 8906.521739130434,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 8,
+  "원단위": 0.675,
+  "월별가중치": 0.08337450592885376,
+  "한수원_월별할당량": 227055.20936264822,
+  "수자원_월별배출량": 66938.97294960475,
+  "남부발전_월별Scope3": 507662.0306324111,
+  "KRX_배출권가격": 9231.42857142857,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 9,
+  "원단위": 0.656,
+  "월별가중치": 0.08102766798418973,
+  "한수원_월별할당량": 220664.02569169961,
+  "수자원_월별배출량": 65054.76482213439,
+  "남부발전_월별Scope3": 493372.2845849803,
+  "KRX_배출권가격": 9811.111111111111,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 10,
+  "원단위": 0.62,
+  "월별가중치": 0.07658102766798419,
+  "한수원_월별할당량": 208554.4145256917,
+  "수자원_월별배출량": 61484.686264822136,
+  "남부발전_월별Scope3": 466296.976284585,
+  "KRX_배출권가격": 10916.5,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 11,
+  "원단위": 0.695,
+  "월별가중치": 0.08584486166007904,
+  "한수원_월별할당량": 233782.77112154147,
+  "수자원_월별배출량": 68922.34992588931,
+  "남부발전_월별Scope3": 522703.868577075,
+  "KRX_배출권가격": 11580.952380952382,
+  "동서발전_2023보정배출량": 0
+}, {
+  "년도": 2024,
+  "월": 12,
+  "원단위": 0.755,
+  "월별가중치": 0.09325592885375494,
+  "한수원_월별할당량": 253965.45639822134,
+  "수자원_월별배출량": 74872.48085474309,
+  "남부발전_월별Scope3": 567829.3824110673,
+  "KRX_배출권가격": 9984.5,
+  "동서발전_2023보정배출량": 0
+}];
+})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/emissions-dashboard/data.js", error: String((e && e.message) || e) }); }
+
+// ui_kits/emissions-dashboard/models.js
+try { (() => {
+// Faithful JS re-implementation of the Streamlit MVP's model + chained-relay forecast.
+// Mirrors load_data() feature engineering, OLS (statsmodels) via least squares,
+// a from-scratch RandomForestRegressor port (bagged CART trees), and the
+// 향후 1년 릴레이 연산 loop. No Python backend required.
+(function () {
+  const FEATS = ['할당량_여유_지수', 'X_원단위', '배출권가격_1달전', '정산기_시즌스위치', '리스크_2024더미'];
+
+  // ---- feature engineering (load_data) ----
+  // Faithful port of the Streamlit load_data(): auto-detects columns from whatever
+  // master set is loaded, so swapping the CSV adapts the model automatically.
+  //   할당량_여유_지수: 총_할당량 − 총_배출량  →  발전부문_수급과부족지수 × −1  →  cols[1] × −1
+  //   y_가격: KRX_배출권가격  →  last column
+  //   X_원단위: 원단위  →  cols[1]
+  //   날짜: 년도/월  →  monthly range from 2021-01
+  function prepare(master) {
+    if (!master || !master.length) return [];
+    const cols = Object.keys(master[0]);
+    const has = c => cols.includes(c);
+    const margin = has('총_할당량') && has('총_배출량') ? r => r['총_할당량'] - r['총_배출량'] : has('발전부문_수급과부족지수') ? r => r['발전부문_수급과부족지수'] * -1 : r => r[cols[1]] * -1;
+    const yKey = has('KRX_배출권가격') ? 'KRX_배출권가격' : cols[cols.length - 1];
+    const xKey = has('원단위') ? '원단위' : cols[1];
+    const hasYM = has('년도') && has('월');
+    const rows = master.map((r, i) => ({
+      년도: hasYM ? r['년도'] : 2021 + Math.floor(i / 12),
+      월: hasYM ? r['월'] : i % 12 + 1,
+      y_가격: r[yKey],
+      X_원단위: r[xKey],
+      할당량_여유_지수: margin(r),
+      정산기_시즌스위치: hasYM ? [4, 5, 6].includes(r['월']) ? 1 : 0 : 0,
+      리스크_2024더미: hasYM ? r['년도'] === 2024 ? 1 : 0 : 0,
+      날짜: hasYM ? new Date(r['년도'], r['월'] - 1, 1) : new Date(2021, i, 1)
+    }));
+    rows.sort((a, b) => a.날짜 - b.날짜);
+    for (let i = 0; i < rows.length; i++) rows[i].배출권가격_1달전 = i === 0 ? null : rows[i - 1].y_가격;
+    return rows.filter(r => r.배출권가격_1달전 != null && Number.isFinite(r.y_가격) && Number.isFinite(r.X_원단위) && Number.isFinite(r.할당량_여유_지수));
+  }
+
+  // ---- CSV parser: header row + numeric coercion (utf-8/BOM tolerant) ----
+  function parseCsv(text) {
+    const lines = text.replace(/^\ufeff/, '').trim().split(/\r?\n/);
+    const head = lines[0].split(',').map(s => s.trim());
+    return lines.slice(1).filter(l => l.trim()).map(l => {
+      const c = l.split(',');
+      const o = {};
+      head.forEach((h, i) => {
+        const v = c[i] != null ? c[i].trim() : '';
+        o[h] = v !== '' && !isNaN(+v) ? +v : v;
+      });
+      return o;
+    });
+  }
+
+  // ---- linear algebra: solve (XtX) b = Xty via Gaussian elimination ----
+  function solveOLS(rows) {
+    const X = rows.map(r => [1, ...FEATS.map(f => r[f])]);
+    const y = rows.map(r => r.y_가격);
+    const p = X[0].length;
+    const XtX = Array.from({
+      length: p
+    }, () => new Array(p).fill(0));
+    const Xty = new Array(p).fill(0);
+    for (let n = 0; n < X.length; n++) {
+      for (let i = 0; i < p; i++) {
+        Xty[i] += X[n][i] * y[n];
+        for (let j = 0; j < p; j++) XtX[i][j] += X[n][i] * X[n][j];
+      }
+    }
+    // augmented, with tiny ridge for stability
+    for (let i = 0; i < p; i++) XtX[i][i] += 1e-6;
+    const A = XtX.map((row, i) => [...row, Xty[i]]);
+    for (let c = 0; c < p; c++) {
+      let piv = c;
+      for (let r = c + 1; r < p; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+      [A[c], A[piv]] = [A[piv], A[c]];
+      const d = A[c][c] || 1e-9;
+      for (let j = c; j <= p; j++) A[c][j] /= d;
+      for (let r = 0; r < p; r++) if (r !== c) {
+        const f = A[r][c];
+        for (let j = c; j <= p; j++) A[r][j] -= f * A[c][j];
+      }
+    }
+    const beta = A.map(row => row[p]);
+    return input => beta[0] + FEATS.reduce((s, f, k) => s + beta[k + 1] * input[f], 0);
+  }
+
+  // ---- RandomForestRegressor port: bagged CART regression trees ----
+  // Mirrors sklearn defaults: n_estimators=100, bootstrap=True, max_features=1.0
+  // (all features per split), max_depth=None, min_samples_split=2, min_samples_leaf=1,
+  // random_state=42 (seeded RNG for reproducibility).
+  function buildRF(rows, nTrees = 100, seed = 42) {
+    const data = rows.map(r => ({
+      x: FEATS.map(f => r[f]),
+      y: r.y_가격
+    }));
+    const N = data.length,
+      P = FEATS.length;
+    let s = seed >>> 0;
+    const rand = () => {
+      s = s + 0x6D2B79F5 >>> 0;
+      let t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+
+    // variance-reduction split; grows to purity like sklearn (min_samples_leaf=1)
+    function build(idx) {
+      const ys = idx.map(i => data[i].y);
+      const mean = ys.reduce((a, b) => a + b, 0) / ys.length;
+      if (idx.length < 2) return {
+        leaf: mean
+      };
+      let best = null;
+      for (let f = 0; f < P; f++) {
+        const vals = [...new Set(idx.map(i => data[i].x[f]))].sort((a, b) => a - b);
+        for (let k = 0; k < vals.length - 1; k++) {
+          const thr = (vals[k] + vals[k + 1]) / 2;
+          const L = [],
+            R = [];
+          for (const i of idx) (data[i].x[f] <= thr ? L : R).push(i);
+          if (!L.length || !R.length) continue;
+          const sse = a => {
+            const m = a.reduce((s2, i) => s2 + data[i].y, 0) / a.length;
+            return a.reduce((s2, i) => s2 + (data[i].y - m) ** 2, 0);
+          };
+          const err = sse(L) + sse(R);
+          if (!best || err < best.err) best = {
+            err,
+            f,
+            thr,
+            L,
+            R
+          };
+        }
+      }
+      if (!best) return {
+        leaf: mean
+      };
+      return {
+        f: best.f,
+        thr: best.thr,
+        L: build(best.L),
+        R: build(best.R)
+      };
+    }
+    const trees = [];
+    for (let t = 0; t < nTrees; t++) {
+      const idx = Array.from({
+        length: N
+      }, () => Math.floor(rand() * N)); // bootstrap sample
+      trees.push(build(idx));
+    }
+    const predOne = (node, x) => {
+      while (node.leaf === undefined) node = x[node.f] <= node.thr ? node.L : node.R;
+      return node.leaf;
+    };
+    return input => {
+      const x = FEATS.map(f => input[f]);
+      return trees.reduce((sum, tr) => sum + predOne(tr, x), 0) / trees.length;
+    };
+  }
+
+  // ---- chained relay forecast (section 4) ----
+  function forecast(master, opts) {
+    const {
+      mode,
+      model,
+      simMargin,
+      simIntensity,
+      seasonOption
+    } = opts;
+    const rows = prepare(master);
+    const ols = solveOLS(rows);
+    const rf = buildRF(rows);
+    const auto = mode === 'auto';
+    const latest = rows[rows.length - 1];
+    const latestDate = latest.날짜;
+    const today = new Date(2026, 6, 1); // 2026-07-01
+    const targetEnd = new Date(2027, 6, 1); // +12 months
+
+    const monthMean = (mon, key) => {
+      const h = rows.filter(r => r.월 === mon);
+      return h.length ? h.reduce((s, r) => s + r[key], 0) / h.length : latest[key];
+    };
+    const out = [];
+    let lag = latest.y_가격;
+    let cur = new Date(latestDate.getFullYear(), latestDate.getMonth() + 1, 1);
+    while (cur <= targetEnd) {
+      const mon = cur.getMonth() + 1;
+      let season;
+      if (auto || seasonOption === 'auto') season = [4, 5, 6].includes(mon) ? 1 : 0;else if (seasonOption === 'force-on') season = 1;else season = 0;
+      const baseIntensity = monthMean(mon, 'X_원단위');
+      const baseMargin = monthMean(mon, '할당량_여유_지수');
+      const yearDiff = Math.max(0, cur.getFullYear() - latestDate.getFullYear());
+      const tightening = yearDiff * 0.4;
+      const risk = cur.getFullYear() === 2024 ? 1 : 0;
+      let stepIntensity, stepMargin;
+      if (auto) {
+        stepIntensity = baseIntensity;
+        stepMargin = baseMargin - tightening;
+      } else {
+        stepMargin = baseMargin + simMargin - tightening;
+        stepIntensity = baseIntensity * (1 + simIntensity / 100);
+      }
+      const baseInput = {
+        할당량_여유_지수: baseMargin,
+        X_원단위: baseIntensity,
+        배출권가격_1달전: lag,
+        정산기_시즌스위치: season,
+        리스크_2024더미: risk
+      };
+      const stepInput = {
+        할당량_여유_지수: stepMargin,
+        X_원단위: stepIntensity,
+        배출권가격_1달전: lag,
+        정산기_시즌스위치: season,
+        리스크_2024더미: risk
+      };
+      let pred;
+      if (model === 'ols') pred = ols(stepInput);else if (auto) pred = rf(stepInput);else {
+        const rfBase = rf(baseInput),
+          rfRaw = rf(stepInput);
+        const smooth = simIntensity * (rfBase * 0.015) - simMargin * 45.0;
+        pred = rfRaw !== rfBase ? rfRaw + smooth * 0.3 : rfBase + smooth;
+      }
+      pred = Math.max(0, pred);
+      out.push({
+        날짜: cur,
+        month: `${cur.getFullYear()}년 ${String(mon).padStart(2, '0')}월`,
+        예측가격: pred,
+        여유지수: stepMargin,
+        정산기: season
+      });
+      lag = pred;
+      cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+    }
+    const next1y = out.filter(r => r.날짜 >= today);
+    const nextMonth = out.filter(r => r.날짜 > today);
+    return {
+      history: rows.map(r => ({
+        날짜: r.날짜,
+        y: r.y_가격
+      })),
+      latestDate,
+      today,
+      targetEnd,
+      future: out,
+      next1y,
+      nextMonth,
+      todayPred: next1y[0],
+      nextPred: nextMonth[0],
+      lastPred: next1y[next1y.length - 1],
+      minP: Math.min(...next1y.map(r => r.예측가격)),
+      maxP: Math.max(...next1y.map(r => r.예측가격))
+    };
+  }
+  window.EmissionsModel = {
+    forecast,
+    prepare,
+    parseCsv
+  };
+})();
+})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/emissions-dashboard/models.js", error: String((e && e.message) || e) }); }
+
+__ds_ns.Button = __ds_scope.Button;
+
+__ds_ns.Table = __ds_scope.Table;
+
+__ds_ns.Badge = __ds_scope.Badge;
+
+__ds_ns.Dialog = __ds_scope.Dialog;
+
+__ds_ns.Input = __ds_scope.Input;
+
+__ds_ns.Tabs = __ds_scope.Tabs;
+
+__ds_ns.Card = __ds_scope.Card;
+
+})();
+
+</script>
+
+<style>
+html,body{margin:0;background:#f4f5f6;font-family:var(--krds-font-family-base)}
+*{box-sizing:border-box}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:1000px;background:#256ef4;border:3px solid #fff;box-shadow:0 0 0 1px #256ef4;cursor:pointer;margin-top:-8px}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px #256ef4}
+a{color:#256ef4}a:hover{color:#0b50d0}
+</style>
+</head><body><div id="root"></div>
+<script>window.__API_BASE__='api';</script>
+<script type="text/babel">
+const { Button, Table, Badge, Card } = window.KRDSDesignSystem_fd0bab;
+const { useState, useMemo } = React;
+
+const won = (n) => Math.round(n).toLocaleString('ko-KR') + ' 원';
+const signed = (n) => (n >= 0 ? '+' : '−') + Math.abs(Math.round(n)).toLocaleString('ko-KR') + ' 원';
+const fmtMonth = (d) => `${d.getFullYear()}년 ${String(d.getMonth() + 1).padStart(2, '0')}월`;
+
+/* ---------- form primitives (KRDS radio / select / slider) ---------- */
+function RadioGroup({ label, options, value, onChange }) {
+  return (
+    <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
+      <legend style={{ fontSize: 15, fontWeight: 700, color: '#1e2124', padding: 0, marginBottom: 12 }}>{label}</legend>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {options.map((o) => {
+          const on = o.value === value;
+          return (
+            <label key={o.value} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 15, color: '#1e2124' }}>
+              <input type="radio" name={label} checked={on} onChange={() => onChange(o.value)} style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
+              <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: 1000, border: on ? '6px solid #256ef4' : '1px solid #58616a', background: '#fff', flexShrink: 0, transition: 'border 0.15s ease' }}></span>
+              {o.label}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span style={{ fontSize: 15, fontWeight: 700, color: '#1e2124' }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Select({ value, onChange, options }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={{
+      appearance: 'none', height: 48, padding: '0 44px 0 16px', borderRadius: 6, border: '1px solid #58616a',
+      background: "#fff url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' stroke='%231e2124' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\") no-repeat right 12px center",
+      fontFamily: 'var(--krds-font-family-base)', fontSize: 17, color: '#1e2124', lineHeight: 1.5, width: '100%', cursor: 'pointer',
+    }}>{options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+  );
+}
+
+function Slider({ min, max, step, value, onChange, unit }) {
+  const pct = ((value - min) / (max - min)) * 100;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(parseFloat(e.target.value))}
+        style={{ appearance: 'none', WebkitAppearance: 'none', height: 6, borderRadius: 1000, background: `linear-gradient(90deg,#256ef4 ${pct}%,#cdd1d5 ${pct}%)`, outline: 'none', width: '100%' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#6d7882' }}>
+        <span>{min}{unit}</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#0b50d0' }}>{value > 0 ? '+' : ''}{value}{unit}</span>
+        <span>{max}{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, delta, deltaLabel, down }) {
+  return (
+    <div style={{ flex: 1, border: '1px solid #b1b8be', borderRadius: 8, padding: 20, background: '#fff', minWidth: 0 }}>
+      <div style={{ fontSize: 15, color: '#464c53', marginBottom: 10 }}>{label}</div>
+      <div style={{ fontSize: 32, fontWeight: 700, color: '#1e2124', letterSpacing: '1px', lineHeight: 1.25 }}>{value}</div>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 15, fontWeight: 700, color: down ? '#de3412' : '#228738' }}>
+        <span aria-hidden="true">{down ? '▼' : '▲'}</span>{delta}
+        <span style={{ color: '#6d7882', fontWeight: 400 }}>{deltaLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- time-axis line chart (history solid, forecast dashed) ---------- */
+function Chart({ history, future, latestDate }) {
+  const W = 760, H = 320, PL = 56, PR = 20, PT = 24, PB = 40;
+  const predSeries = [{ 날짜: latestDate, v: history[history.length - 1].y }, ...future.map((r) => ({ 날짜: r.날짜, v: r.예측가격 }))];
+  const allV = history.map((h) => h.y).concat(predSeries.map((p) => p.v));
+  const t0 = history[0].날짜.getTime();
+  const t1 = future[future.length - 1].날짜.getTime();
+  const vmin = Math.min(...allV), vmax = Math.max(...allV);
+  const pad = (vmax - vmin) * 0.12 || 1000;
+  const lo = Math.floor((vmin - pad) / 1000) * 1000, hi = Math.ceil((vmax + pad) / 1000) * 1000;
+  const x = (d) => PL + ((d.getTime() - t0) / (t1 - t0)) * (W - PL - PR);
+  const y = (v) => PT + (1 - (v - lo) / (hi - lo)) * (H - PT - PB);
+  const path = (arr, key) => arr.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.날짜).toFixed(1)} ${y(p[key]).toFixed(1)}`).join(' ');
+  const nTicks = 4;
+  const ticks = Array.from({ length: nTicks + 1 }, (_, i) => Math.round(lo + (i / nTicks) * (hi - lo)));
+  const years = [...new Set(history.concat(future).map((r) => r.날짜.getFullYear()))];
+  const forecastX = x(latestDate);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="과거 실제 배출권 가격과 실행일 기준 향후 1년 예측 곡선">
+      {ticks.map((t) => (
+        <g key={t}>
+          <line x1={PL} x2={W - PR} y1={y(t)} y2={y(t)} stroke="#e6e8ea" />
+          <text x={PL - 10} y={y(t) + 4} textAnchor="end" fontSize="11" fill="#6d7882">{(t / 1000).toLocaleString()}천</text>
+        </g>
+      ))}
+      <rect x={forecastX} y={PT} width={W - PR - forecastX} height={H - PT - PB} fill="#ecf2fe" opacity="0.7" />
+      <line x1={forecastX} x2={forecastX} y1={PT} y2={H - PB} stroke="#b1cefb" strokeDasharray="3 3" />
+      <text x={forecastX + 6} y={PT + 12} fontSize="11" fill="#0b50d0" fontWeight="700">예측 시작</text>
+      {years.map((yr) => {
+        const d = new Date(yr, 0, 1);
+        if (d.getTime() < t0 || d.getTime() > t1) return null;
+        return <text key={yr} x={x(d)} y={H - 12} textAnchor="middle" fontSize="11" fill="#464c53">{yr}</text>;
+      })}
+      <path d={path(history, 'y')} fill="none" stroke="#58616a" strokeWidth="2" />
+      <path d={path(predSeries, 'v')} fill="none" stroke="#256ef4" strokeWidth="2.5" strokeDasharray="6 4" />
+      {future.filter((_, i) => i % 3 === 0).map((r, i) => <circle key={i} cx={x(r.날짜)} cy={y(r.예측가격)} r="2.5" fill="#256ef4" />)}
+    </svg>
+  );
+}
+
+/* ---------- data source: backend API, with local-compute fallback for the DS-tab card ---------- */
+const API_BASE = (typeof window.__API_BASE__ === 'string') ? window.__API_BASE__ : null;
+const DATA_NAME = '발전부문_배출권_분석_마스터셋.csv';
+
+const toDate = (v) => (v instanceof Date ? v : new Date(v));
+function normalizeForecast(r) {
+  const rec = (m) => m && ({ ...m, 날짜: toDate(m.date || m.날짜) });
+  return {
+    ...r,
+    latestDate: toDate(r.latestDate), today: toDate(r.today), targetEnd: toDate(r.targetEnd),
+    history: r.history.map((h) => ({ 날짜: toDate(h.date || h.날짜), y: h.y })),
+    future: r.future.map(rec), next1y: r.next1y.map(rec), nextMonth: r.nextMonth.map(rec),
+    todayPred: rec(r.todayPred), nextPred: rec(r.nextPred), lastPred: rec(r.lastPred),
+  };
+}
+function getForecast(params) {
+  if (API_BASE !== null) {
+    const qs = new URLSearchParams(params).toString();
+    return fetch(`${API_BASE}/predict?${qs}`, { cache: 'no-store' })
+      .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+      .then(normalizeForecast);
+  }
+  // local fallback: design-system card preview has no backend, compute in-browser
+  return Promise.resolve(normalizeForecast(window.EmissionsModel.forecast(window.MASTER, params)));
+}
+
+function CenterScreen({ children }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4f5f6', padding: 24 }}>
+      <div style={{ maxWidth: 480, width: '100%', background: '#fff', border: '1px solid #b1b8be', borderRadius: 12, padding: 40, textAlign: 'center' }}>{children}</div>
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <CenterScreen>
+      <div aria-hidden="true" style={{ width: 40, height: 40, margin: '0 auto 20px', border: '4px solid #ecf2fe', borderTopColor: '#256ef4', borderRadius: 1000, animation: 'krds-spin 0.9s linear infinite' }}></div>
+      <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700, color: '#1e2124' }}>데이터를 불러오는 중입니다</h1>
+      <p style={{ margin: 0, fontSize: 17, color: '#464c53' }}>서버에서 마스터셋을 가져오고 있습니다.</p>
+      <style>{'@keyframes krds-spin{to{transform:rotate(360deg)}}'}</style>
+    </CenterScreen>
+  );
+}
+
+function ServerErrorScreen({ detail, onRetry }) {
+  return (
+    <CenterScreen>
+      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: 1000, background: '#fdefec', color: '#de3412', fontSize: 30, fontWeight: 700, margin: '0 auto 20px' }} aria-hidden="true">!</div>
+      <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700, color: '#1e2124' }}>서버에 연결할 수 없습니다</h1>
+      <p style={{ margin: '0 0 8px', fontSize: 17, color: '#464c53', lineHeight: 1.5 }}>마스터셋 데이터를 불러오지 못했습니다. 백엔드 서버 상태와 네트워크 연결을 확인한 뒤 다시 시도해 주세요.</p>
+      {detail && <p style={{ margin: '0 0 24px', fontSize: 13, color: '#6d7882' }}>({detail})</p>}
+      <div style={{ marginTop: 24 }}>
+        <Button variant="primary" size="large" onClick={onRetry}>다시 시도</Button>
+      </div>
+    </CenterScreen>
+  );
+}
+
+function App() {
+  const [mode, setMode] = useState('auto');
+  const [model, setModel] = useState('ols');
+  const [simMargin, setSimMargin] = useState(0);
+  const [simIntensity, setSimIntensity] = useState(0);
+  const [seasonOption, setSeasonOption] = useState('auto');
+  const [r, setR] = useState(null);
+  const [status, setStatus] = useState('loading'); // loading | ready | error
+  const [detail, setDetail] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  React.useEffect(() => {
+    let alive = true;
+    if (!r) setStatus('loading');
+    getForecast({ mode, model, simMargin, simIntensity, seasonOption })
+      .then((res) => { if (alive) { setR(res); setStatus('ready'); } })
+      .catch((e) => { if (alive) { setDetail(e && e.message ? e.message : '연결 실패'); setStatus('error'); } });
+    return () => { alive = false; };
+    // eslint-disable-next-line
+  }, [mode, model, simMargin, simIntensity, seasonOption, reloadKey]);
+
+  if (status === 'error') return <ServerErrorScreen detail={detail} onRetry={() => setReloadKey((k) => k + 1)} />;
+  if (!r) return <LoadingScreen />;
+  return (
+    <Dashboard r={r} mode={mode} setMode={setMode} model={model} setModel={setModel}
+      simMargin={simMargin} setSimMargin={setSimMargin} simIntensity={simIntensity} setSimIntensity={setSimIntensity}
+      seasonOption={seasonOption} setSeasonOption={setSeasonOption} />
+  );
+}
+
+/* ---------- dashboard (presentational) ---------- */
+function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin, simIntensity, setSimIntensity, seasonOption, setSeasonOption }) {
+  const manual = mode === 'manual';
+
+  const columns = [
+    { key: 'month', label: '예측 월' },
+    { key: 'price', label: '예측 단가', align: 'right' },
+    { key: 'margin', label: '할당 여유지수', align: 'right' },
+    { key: 'season', label: '정산기 여부', align: 'center' },
+  ];
+  const rows = r.next1y.map((m) => ({
+    month: fmtMonth(m.날짜),
+    price: won(m.예측가격),
+    margin: Math.round(m.여유지수).toLocaleString('ko-KR') + ' 만톤',
+    season: m.정산기
+      ? <Badge variant="point" appearance="outline">정산기 (4–6월)</Badge>
+      : <Badge variant="gray" appearance="outline">평달</Badge>,
+  }));
+
+  const downloadCsv = () => {
+    const header = ['예측 월', '예측 단가(원)', '할당 여유지수(만톤)', '정산기 여부'];
+    const body = r.next1y.map((m) => [fmtMonth(m.날짜), Math.round(m.예측가격), Math.round(m.여유지수), m.정산기 ? '정산기(4-6월)' : '평달'].join(','));
+    const blob = new Blob(['\ufeff' + header.join(',') + '\n' + body.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `남부발전_배출권_1년_가격예측_결과_${r.today.getFullYear()}${String(r.today.getMonth() + 1).padStart(2, '0')}.csv`;
+    a.click();
+  };
+
+  return (
+    <div style={{ color: '#1e2124', minHeight: '100vh' }}>
+      <header style={{ background: '#fff', borderBottom: '1px solid #b1b8be' }}>
+        <div style={{ maxWidth: 1440, margin: '0 auto', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: '0.5px' }}>배출권 가격 예측 MVP</span>
+            <Badge variant="primary" appearance="outline">발전부문</Badge>
+          </div>
+          <nav style={{ display: 'flex', gap: 20, fontSize: 15, color: '#464c53' }}>
+            <span>글자·화면 설정</span><span>통합검색</span><span>전체메뉴</span>
+          </nav>
+        </div>
+      </header>
+
+      <div style={{ display: 'flex', maxWidth: 1440, margin: '0 auto', alignItems: 'stretch' }}>
+        {/* sidebar */}
+        <aside style={{ width: 340, flexShrink: 0, background: '#eef2f7', borderRight: '1px solid #b1b8be', padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700 }}>시뮬레이션 설정</h2>
+
+          <Field label="마스터셋 데이터">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 48, borderRadius: 6, border: '1px solid #b1b8be', background: '#fff', color: '#1e2124', fontSize: 15, padding: '0 16px' }}>
+              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 1000, background: '#228738', flexShrink: 0 }}></span>
+              <span style={{ wordBreak: 'break-all' }}>{r.dataName || DATA_NAME}</span>
+            </div>
+            <span style={{ fontSize: 13, color: '#6d7882' }}>서버 폴더의 마스터셋 · {r.history.length + 1}개월</span>
+          </Field>
+
+          <RadioGroup label="시뮬레이션 방식 선택" value={mode}
+            onChange={setMode}
+            options={[{ value: 'auto', label: '자동 가격 예측' }, { value: 'manual', label: '사용자 수치 조절' }]} />
+
+          <Field label="1) 예측 알고리즘 엔진 선택">
+            <Select value={model} onChange={setModel}
+              options={[{ value: 'ols', label: 'OLS 수식 모델' }, { value: 'ai', label: 'AI 머신러닝 모델' }]} />
+          </Field>
+
+          <Card variant="info" style={{ padding: 16 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#0b50d0', marginBottom: 4 }}>실행 기준일 · {r.today.getFullYear()}년 {String(r.today.getMonth() + 1).padStart(2, '0')}월 01일</div>
+            <div style={{ fontSize: 15, color: '#1e2124' }}>예측 범위: 오늘 → {fmtMonth(r.targetEnd)} (향후 1년간)</div>
+          </Card>
+
+          {!manual && (
+            <div style={{ background: '#fff', border: '1px solid #b1b8be', borderRadius: 8, padding: 16, fontSize: 15, color: '#464c53', lineHeight: 1.5 }}>
+              <b style={{ color: '#1e2124' }}>자동 가격 예측 가동 중</b><br />과거 계절성 발전 패턴과 4–6월 정산기 매물 수급을 통계·AI 모형이 자동 추정합니다.
+            </div>
+          )}
+
+          {manual && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 22, borderTop: '1px solid #cdd1d5', paddingTop: 22 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>2) 사용자 수치 조절</h3>
+              <Field label="할당량 여유 지수 변동 (만 톤)">
+                <Slider min={-30} max={30} step={0.1} value={simMargin} onChange={setSimMargin} unit="" />
+              </Field>
+              <Field label="발전 온실가스 원단위 변동 (%)">
+                <Slider min={-10} max={10} step={0.1} value={simIntensity} onChange={setSimIntensity} unit="%" />
+              </Field>
+              <Field label="정산기 시즌 적용 방식">
+                <Select value={seasonOption} onChange={setSeasonOption}
+                  options={[{ value: 'auto', label: '달에 따라 자동 적용' }, { value: 'force-on', label: '전 기간 정산기 강제 적용' }, { value: 'force-off', label: '전 기간 일반달 강제 적용' }]} />
+              </Field>
+            </div>
+          )}
+
+          <div style={{ marginTop: 'auto', fontSize: 13, color: '#6d7882', lineHeight: 1.5, borderTop: '1px solid #cdd1d5', paddingTop: 16 }}>
+            데이터: {r.dataName || DATA_NAME} ({r.history.length + 1}개월). 실행일 이후는 연쇄 릴레이 예측 결과입니다. 백엔드 서버가 실제 모델로 계산합니다.
+          </div>
+        </aside>
+
+        {/* main */}
+        <main style={{ flex: 1, padding: 32, minWidth: 0 }}>
+          <h1 style={{ margin: '0 0 4px', fontSize: 40, fontWeight: 700, letterSpacing: '1px', lineHeight: 1.25 }}>발전부문 배출권 가격 예측 MVP 대시보드</h1>
+          <p style={{ margin: '0 0 24px', fontSize: 15, color: '#6d7882' }}>국립창원대학교 identity 팀</p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.55fr)', gap: 24, alignItems: 'start' }}>
+            {/* left */}
+            <section style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+              <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700 }}>실행일({r.today.getFullYear()}-{String(r.today.getMonth() + 1).padStart(2, '0')}) 기준 향후 1년 예측 요약</h2>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <Metric label={`차월 (${fmtMonth(r.nextPred.날짜)}) 예측가`} value={won(r.nextPred.예측가격)}
+                  delta={signed(r.nextPred.예측가격 - r.todayPred.예측가격)} deltaLabel="(당월 대비)" down={r.nextPred.예측가격 < r.todayPred.예측가격} />
+                <Metric label={`1년 후 (${fmtMonth(r.lastPred.날짜)}) 예측가`} value={won(r.lastPred.예측가격)}
+                  delta={signed(r.lastPred.예측가격 - r.nextPred.예측가격)} deltaLabel="(차월 대비)" down={r.lastPred.예측가격 < r.nextPred.예측가격} />
+              </div>
+              <Card variant="info">
+                <b style={{ color: '#0b50d0' }}>향후 1년 변동 범위</b> — 최저 <b>{won(r.minP)}</b> ~ 최고 <b>{won(r.maxP)}</b>. 4–6월 정산기 매물 압박 요인이 반영되었습니다.
+              </Card>
+
+              <h2 style={{ margin: '8px 0 0', fontSize: 19, fontWeight: 700 }}>월별 예측 명세표</h2>
+              <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #b1b8be', borderRadius: 8 }}>
+                <Table columns={columns} rows={rows} />
+              </div>
+              <Button variant="primary" size="large" style={{ width: '100%' }} onClick={downloadCsv}>1년 예측 결과 CSV 파일 다운로드</Button>
+            </section>
+
+            {/* right */}
+            <section style={{ border: '1px solid #b1b8be', borderRadius: 8, background: '#fff', padding: 24, minWidth: 0 }}>
+              <h2 style={{ margin: '0 0 4px', fontSize: 19, fontWeight: 700 }}>과거 실제 가격 + 향후 1년 예측 곡선</h2>
+              <p style={{ margin: '0 0 16px', fontSize: 15, color: '#6d7882' }}>실선: 과거 실측 ({r.history[0].날짜.getFullYear()}–{r.latestDate.getFullYear()}) · 점선: 실행일 기준 AI 연속 예측 (~{fmtMonth(r.targetEnd)})</p>
+              <Chart history={r.history} future={r.future} latestDate={r.latestDate} />
+              <div style={{ display: 'flex', gap: 20, marginTop: 16, fontSize: 15, color: '#464c53', flexWrap: 'wrap' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, height: 2, background: '#58616a' }}></span>과거 실제 가격</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, borderTop: '2.5px dashed #256ef4' }}></span>AI 연속 예측 곡선</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 16, height: 12, background: '#ecf2fe', border: '1px solid #b1cefb' }}></span>예측 구간</span>
+              </div>
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e6e8ea', display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                <div><div style={{ fontSize: 13, color: '#6d7882', marginBottom: 4 }}>사용 엔진</div><div style={{ fontSize: 17, fontWeight: 700 }}>{model === 'ols' ? 'OLS 수식 모델' : 'AI 머신러닝 모델'}</div></div>
+                <div><div style={{ fontSize: 13, color: '#6d7882', marginBottom: 4 }}>시뮬레이션 방식</div><div style={{ fontSize: 17, fontWeight: 700 }}>{manual ? '사용자 수치 조절' : '자동 가격 예측'}</div></div>
+                <div><div style={{ fontSize: 13, color: '#6d7882', marginBottom: 4 }}>예측 개월</div><div style={{ fontSize: 17, fontWeight: 700 }}>{r.next1y.length}개월</div></div>
+              </div>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script></body></html>
