@@ -1558,79 +1558,131 @@ function Metric({ label, value, delta, deltaLabel, down }) {
   );
 }
 
-/* ---------- time-axis line chart (history solid, forecast dashed) + hover tooltip ---------- */
-function Chart({ history, future, latestDate }) {
+/* ---------- pan/zoom time-axis line chart (history solid, forecast dashed) + hover tooltip ---------- */
+function Chart({ history, future, latestDate, defaultStart }) {
   const W = 760, H = 320, PL = 56, PR = 20, PT = 24, PB = 40;
   const svgRef = React.useRef(null);
+  const MS = 86400000;
+  const fullMin = history[0].날짜.getTime();
+  const fullMax = future[future.length - 1].날짜.getTime();
+  const initStart = Math.max(fullMin, (defaultStart ? defaultStart.getTime() : fullMin));
+
+  const [view, setView] = useState([initStart, fullMax]); // visible time window
   const [hover, setHover] = useState(null);
+  const drag = React.useRef(null);
+  const [t0, t1] = view;
+
   const predSeries = [{ 날짜: latestDate, v: history[history.length - 1].y }, ...future.map((r) => ({ 날짜: r.날짜, v: r.예측가격 }))];
-  const allV = history.map((h) => h.y).concat(predSeries.map((p) => p.v));
-  const t0 = history[0].날짜.getTime();
-  const t1 = future[future.length - 1].날짜.getTime();
-  const vmin = Math.min(...allV), vmax = Math.max(...allV);
+  const clampView = (a, b) => {
+    const minSpan = 90 * MS, maxSpan = fullMax - fullMin;
+    let span = Math.min(Math.max(b - a, minSpan), maxSpan);
+    let start = a, end = a + span;
+    if (start < fullMin) { start = fullMin; end = start + span; }
+    if (end > fullMax) { end = fullMax; start = end - span; }
+    if (start < fullMin) start = fullMin;
+    return [start, end];
+  };
+
+  // y-axis scales to the currently visible points only
+  const visV = history.concat(future.map((f) => ({ 날짜: f.날짜, y: f.예측가격 })))
+    .filter((p) => p.날짜.getTime() >= t0 - MS * 20 && p.날짜.getTime() <= t1 + MS * 20)
+    .map((p) => p.y);
+  const vmin = Math.min(...visV), vmax = Math.max(...visV);
   const pad = (vmax - vmin) * 0.12 || 1000;
   const lo = Math.floor((vmin - pad) / 1000) * 1000, hi = Math.ceil((vmax + pad) / 1000) * 1000;
   const x = (d) => PL + ((d.getTime() - t0) / (t1 - t0)) * (W - PL - PR);
   const y = (v) => PT + (1 - (v - lo) / (hi - lo)) * (H - PT - PB);
+  const invX = (px) => t0 + ((px - PL) / (W - PL - PR)) * (t1 - t0);
   const path = (arr, key) => arr.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.날짜).toFixed(1)} ${y(p[key]).toFixed(1)}`).join(' ');
   const nTicks = 4;
   const ticks = Array.from({ length: nTicks + 1 }, (_, i) => Math.round(lo + (i / nTicks) * (hi - lo)));
   const years = [...new Set(history.concat(future).map((r) => r.날짜.getFullYear()))];
   const forecastX = x(latestDate);
+  const pts = history.map((h) => ({ d: h.날짜, v: h.y, type: '실제' })).concat(future.map((f) => ({ d: f.날짜, v: f.예측가격, type: '예측' })));
 
-  // combined points for hover (past actual + forecast)
-  const pts = history.map((h) => ({ d: h.날짜, v: h.y, type: '실제' }))
-    .concat(future.map((f) => ({ d: f.날짜, v: f.예측가격, type: '예측' })));
+  const svgCoord = (e) => { const r = svgRef.current.getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * W; };
 
+  const onWheel = (e) => {
+    e.preventDefault();
+    const sx = svgCoord(e);
+    const anchor = invX(sx);
+    const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15; // down = zoom out
+    const na = anchor - (anchor - t0) * factor;
+    const nb = anchor + (t1 - anchor) * factor;
+    setView(clampView(na, nb));
+  };
+  const onDown = (e) => { drag.current = { px: svgCoord(e), t0, t1 }; setHover(null); };
   const onMove = (e) => {
-    const svg = svgRef.current; if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const sx = ((e.clientX - rect.left) / rect.width) * W;
+    const sx = svgCoord(e);
+    if (drag.current) {
+      const dt = (invX(sx) - invX(drag.current.px));
+      setView(clampView(drag.current.t0 - dt, drag.current.t1 - dt));
+      return;
+    }
     let best = null, bd = Infinity;
-    for (const p of pts) { const d = Math.abs(x(p.d) - sx); if (d < bd) { bd = d; best = p; } }
+    for (const p of pts) { const px = x(p.d); if (px < PL || px > W - PR) continue; const dd = Math.abs(px - sx); if (dd < bd) { bd = dd; best = p; } }
     setHover(best);
   };
+  const endDrag = () => { drag.current = null; };
 
   let tip = null;
-  if (hover) {
+  if (hover && !drag.current) {
     const hx = x(hover.d), hy = y(hover.v);
-    const bw = 128, bh = 46;
-    const bx = Math.min(Math.max(hx - bw / 2, PL), W - PR - bw);
-    const by = hy - bh - 12 < PT ? hy + 12 : hy - bh - 12;
-    tip = (
-      <g style={{ pointerEvents: 'none' }}>
-        <line x1={hx} x2={hx} y1={PT} y2={H - PB} stroke="#58616a" strokeDasharray="3 3" />
-        <circle cx={hx} cy={hy} r="4.5" fill={hover.type === '예측' ? '#256ef4' : '#1e2124'} stroke="#fff" strokeWidth="1.5" />
-        <rect x={bx} y={by} width={bw} height={bh} rx="6" fill="#1e2124" />
-        <text x={bx + 12} y={by + 18} fontSize="12" fill="#b1b8be">{fmtMonth(hover.d)} · {hover.type}</text>
-        <text x={bx + 12} y={by + 36} fontSize="14" fontWeight="700" fill="#fff">{won(hover.v)}</text>
-      </g>
-    );
+    if (hx >= PL && hx <= W - PR) {
+      const bw = 128, bh = 46;
+      const bx = Math.min(Math.max(hx - bw / 2, PL), W - PR - bw);
+      const by = hy - bh - 12 < PT ? hy + 12 : hy - bh - 12;
+      tip = (
+        <g style={{ pointerEvents: 'none' }}>
+          <line x1={hx} x2={hx} y1={PT} y2={H - PB} stroke="#58616a" strokeDasharray="3 3" />
+          <circle cx={hx} cy={hy} r="4.5" fill={hover.type === '예측' ? '#256ef4' : '#1e2124'} stroke="#fff" strokeWidth="1.5" />
+          <rect x={bx} y={by} width={bw} height={bh} rx="6" fill="#1e2124" />
+          <text x={bx + 12} y={by + 18} fontSize="12" fill="#b1b8be">{fmtMonth(hover.d)} · {hover.type}</text>
+          <text x={bx + 12} y={by + 36} fontSize="14" fontWeight="700" fill="#fff">{won(hover.v)}</text>
+        </g>
+      );
+    }
   }
+  const zoomed = t0 > fullMin + MS || t1 < fullMax - MS;
 
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="과거 실제 배출권 가격과 실행일 기준 향후 1년 예측 곡선"
-      onMouseMove={onMove} onMouseLeave={() => setHover(null)} style={{ touchAction: 'none' }}>
-      {ticks.map((t) => (
-        <g key={t}>
-          <line x1={PL} x2={W - PR} y1={y(t)} y2={y(t)} stroke="#e6e8ea" />
-          <text x={PL - 10} y={y(t) + 4} textAnchor="end" fontSize="11" fill="#6d7882">{(t / 1000).toLocaleString()}천</text>
+    <div style={{ position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 0, right: 0, display: 'flex', gap: 6, zIndex: 2 }}>
+        <button onClick={() => { const c = (t0 + t1) / 2, s = (t1 - t0) / 2 / 1.4; setView(clampView(c - s, c + s)); }} style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid #b1b8be', background: '#fff', color: '#1e2124', fontSize: 18, fontWeight: 700, cursor: 'pointer', lineHeight: 1 }} aria-label="확대">+</button>
+        <button onClick={() => { const c = (t0 + t1) / 2, s = (t1 - t0) / 2 * 1.4; setView(clampView(c - s, c + s)); }} style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid #b1b8be', background: '#fff', color: '#1e2124', fontSize: 18, fontWeight: 700, cursor: 'pointer', lineHeight: 1 }} aria-label="축소">−</button>
+        <button onClick={() => setView([initStart, fullMax])} disabled={!zoomed} style={{ height: 32, padding: '0 12px', borderRadius: 6, border: '1px solid #b1b8be', background: zoomed ? '#fff' : '#f4f5f6', color: zoomed ? '#1e2124' : '#b1b8be', fontSize: 13, fontWeight: 700, cursor: zoomed ? 'pointer' : 'default' }}>초기화</button>
+      </div>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="과거 실제 배출권 가격과 실행일 기준 향후 1년 예측 곡선. 마우스 휠로 확대·축소, 드래그로 이동."
+        onWheel={onWheel} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={endDrag} onMouseLeave={() => { endDrag(); setHover(null); }}
+        style={{ touchAction: 'none', cursor: drag.current ? 'grabbing' : 'grab', userSelect: 'none' }}>
+        <defs><clipPath id="plotClip"><rect x={PL} y={PT} width={W - PL - PR} height={H - PT - PB} /></clipPath></defs>
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={PL} x2={W - PR} y1={y(t)} y2={y(t)} stroke="#e6e8ea" />
+            <text x={PL - 10} y={y(t) + 4} textAnchor="end" fontSize="11" fill="#6d7882">{(t / 1000).toLocaleString()}천</text>
+          </g>
+        ))}
+        <g clipPath="url(#plotClip)">
+          <rect x={forecastX} y={PT} width={Math.max(0, W - PR - forecastX)} height={H - PT - PB} fill="#ecf2fe" opacity="0.7" />
+          <line x1={forecastX} x2={forecastX} y1={PT} y2={H - PB} stroke="#b1cefb" strokeDasharray="3 3" />
+          {years.map((yr) => {
+            const d = new Date(yr, 0, 1);
+            if (d.getTime() < t0 || d.getTime() > t1) return null;
+            return <line key={'g' + yr} x1={x(d)} x2={x(d)} y1={PT} y2={H - PB} stroke="#f0f1f2" />;
+          })}
+          <path d={path(history, 'y')} fill="none" stroke="#58616a" strokeWidth="2" />
+          <path d={path(predSeries, 'v')} fill="none" stroke="#256ef4" strokeWidth="2.5" strokeDasharray="6 4" />
+          {future.map((r, i) => <circle key={i} cx={x(r.날짜)} cy={y(r.예측가격)} r="2" fill="#256ef4" />)}
+          {tip}
         </g>
-      ))}
-      <rect x={forecastX} y={PT} width={W - PR - forecastX} height={H - PT - PB} fill="#ecf2fe" opacity="0.7" />
-      <line x1={forecastX} x2={forecastX} y1={PT} y2={H - PB} stroke="#b1cefb" strokeDasharray="3 3" />
-      <text x={forecastX + 6} y={PT + 12} fontSize="11" fill="#0b50d0" fontWeight="700">예측 시작</text>
-      {years.map((yr) => {
-        const d = new Date(yr, 0, 1);
-        if (d.getTime() < t0 || d.getTime() > t1) return null;
-        return <text key={yr} x={x(d)} y={H - 12} textAnchor="middle" fontSize="11" fill="#464c53">{yr}</text>;
-      })}
-      <path d={path(history, 'y')} fill="none" stroke="#58616a" strokeWidth="2" />
-      <path d={path(predSeries, 'v')} fill="none" stroke="#256ef4" strokeWidth="2.5" strokeDasharray="6 4" />
-      {future.map((r, i) => <circle key={i} cx={x(r.날짜)} cy={y(r.예측가격)} r="2" fill="#256ef4" />)}
-      {tip}
-      <rect x={PL} y={PT} width={W - PL - PR} height={H - PT - PB} fill="transparent" />
-    </svg>
+        {forecastX >= PL && forecastX <= W - PR && <text x={Math.min(forecastX + 6, W - PR - 56)} y={PT + 12} fontSize="11" fill="#0b50d0" fontWeight="700">예측 시작</text>}
+        {years.map((yr) => {
+          const d = new Date(yr, 0, 1);
+          if (d.getTime() < t0 || d.getTime() > t1) return null;
+          return <text key={yr} x={x(d)} y={H - 12} textAnchor="middle" fontSize="11" fill="#464c53">{yr}</text>;
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -1844,8 +1896,8 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
             {/* right */}
             <section style={{ border: '1px solid #b1b8be', borderRadius: 8, background: '#fff', padding: 24, minWidth: 0 }}>
               <h2 style={{ margin: '0 0 4px', fontSize: 19, fontWeight: 700 }}>과거 실제 가격 + 향후 1년 예측 곡선</h2>
-              <p style={{ margin: '0 0 16px', fontSize: 15, color: '#6d7882' }}>실선: 최근 실측 ({recentHistory[0].날짜.getFullYear()}.{String(recentHistory[0].날짜.getMonth() + 1).padStart(2, '0')}–{r.latestDate.getFullYear()}.{String(r.latestDate.getMonth() + 1).padStart(2, '0')}) · 점선: 실행일 기준 AI 연속 예측 (~{fmtMonth(r.targetEnd)})</p>
-              <Chart history={recentHistory} future={r.future} latestDate={r.latestDate} />
+              <p style={{ margin: '0 0 16px', fontSize: 15, color: '#6d7882' }}>실선: 실측 · 점선: 실행일 기준 AI 연속 예측 (~{fmtMonth(r.targetEnd)}) · 마우스 휠로 확대·축소, 드래그로 좌우 이동</p>
+              <Chart history={r.history} future={r.future} latestDate={r.latestDate} defaultStart={recentHistory[0].날짜} />
               <div style={{ display: 'flex', gap: 20, marginTop: 16, fontSize: 15, color: '#464c53', flexWrap: 'wrap' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, height: 2, background: '#58616a' }}></span>과거 실제 가격</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, borderTop: '2.5px dashed #256ef4' }}></span>AI 연속 예측 곡선</span>
