@@ -1201,7 +1201,7 @@ try { (() => {
   // ---- feature engineering (load_data) ----
   // Faithful port of the Streamlit load_data(): auto-detects columns from whatever
   // master set is loaded, so swapping the CSV adapts the model automatically.
-  //   할당량_여유_지수: 총_할당량 − 총_배출량  →  발전부문_수급과부족지수 × −1  →  cols[1] × −1
+  //   할당량_여유_지수: 직접 컬럼 → 총 할당량−배출량 → 수급지수×−1 → 월별 할당량−배출량
   //   y_가격: KRX_배출권가격  →  last column
   //   X_원단위: 원단위  →  cols[1]
   //   날짜: 년도/월  →  monthly range from 2021-01
@@ -1209,7 +1209,8 @@ try { (() => {
     if (!master || !master.length) return [];
     const cols = Object.keys(master[0]);
     const has = c => cols.includes(c);
-    const margin = has('총_할당량') && has('총_배출량') ? r => r['총_할당량'] - r['총_배출량'] : has('발전부문_수급과부족지수') ? r => r['발전부문_수급과부족지수'] * -1 : r => r[cols[1]] * -1;
+    const margin = has('할당량_여유_지수') ? r => r['할당량_여유_지수'] : has('총_할당량') && has('총_배출량') ? r => r['총_할당량'] - r['총_배출량'] : has('발전부문_수급과부족지수') ? r => r['발전부문_수급과부족지수'] * -1 : has('한수원_월별할당량') && has('수자원_월별배출량') ? r => r['한수원_월별할당량'] - r['수자원_월별배출량'] - (r['동서발전_2023보정배출량'] || 0) : null;
+    if (!margin) throw new Error('할당량 여유 지수를 계산할 컬럼이 없습니다.');
     const yKey = has('KRX_배출권가격') ? 'KRX_배출권가격' : cols[cols.length - 1];
     const xKey = has('원단위') ? '원단위' : cols[1];
     const hasYM = has('년도') && has('월');
@@ -1246,7 +1247,7 @@ try { (() => {
   // ---- linear algebra: solve (XtX) b = Xty via Gaussian elimination ----
   function solveOLS(rows) {
     const X = rows.map(r => [1, ...FEATS.map(f => r[f])]);
-    const y = rows.map(r => r.y_가격);
+    const y = rows.map(r => Math.log1p(r.y_가격));
     const p = X[0].length;
     const XtX = Array.from({
       length: p
@@ -1273,7 +1274,7 @@ try { (() => {
       }
     }
     const beta = A.map(row => row[p]);
-    return input => beta[0] + FEATS.reduce((s, f, k) => s + beta[k + 1] * input[f], 0);
+    return input => Math.expm1(Math.max(0, Math.min(20, beta[0] + FEATS.reduce((s, f, k) => s + beta[k + 1] * input[f], 0))));
   }
 
   // ---- RandomForestRegressor port: bagged CART regression trees ----
@@ -1367,8 +1368,9 @@ try { (() => {
     const auto = mode === 'auto';
     const latest = rows[rows.length - 1];
     const latestDate = latest.날짜;
-    const today = new Date(2026, 6, 1); // 2026-07-01
-    const targetEnd = new Date(2027, 6, 1); // +12 months
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), 1);
+    const targetEnd = new Date(today.getFullYear(), today.getMonth() + 12, 1);
 
     const monthMean = (mon, key) => {
       const h = rows.filter(r => r.월 === mon);
@@ -1391,16 +1393,9 @@ try { (() => {
         stepIntensity = baseIntensity;
         stepMargin = baseMargin - tightening;
       } else {
-        stepMargin = baseMargin + simMargin - tightening;
+        stepMargin = baseMargin + simMargin * 10000 - tightening;
         stepIntensity = baseIntensity * (1 + simIntensity / 100);
       }
-      const baseInput = {
-        할당량_여유_지수: baseMargin,
-        X_원단위: baseIntensity,
-        배출권가격_1달전: lag,
-        정산기_시즌스위치: season,
-        리스크_2024더미: risk
-      };
       const stepInput = {
         할당량_여유_지수: stepMargin,
         X_원단위: stepIntensity,
@@ -1409,12 +1404,7 @@ try { (() => {
         리스크_2024더미: risk
       };
       let pred;
-      if (model === 'ols') pred = ols(stepInput);else if (auto) pred = rf(stepInput);else {
-        const rfBase = rf(baseInput),
-          rfRaw = rf(stepInput);
-        const smooth = simIntensity * (rfBase * 0.015) - simMargin * 45.0;
-        pred = rfRaw !== rfBase ? rfRaw + smooth * 0.3 : rfBase + smooth;
-      }
+      if (model === 'ols') pred = ols(stepInput);else pred = rf(stepInput);
       pred = Math.max(0, pred);
       out.push({
         날짜: cur,
@@ -1745,6 +1735,139 @@ function ServerErrorScreen({ detail, onRetry }) {
   );
 }
 
+async function apiJson(path, options = {}) {
+  if (API_BASE === null) throw new Error('백엔드 연결이 필요한 기능입니다.');
+  const response = await fetch(`${API_BASE}/${path}`, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+  return body;
+}
+
+const toolCard = { border: '1px solid #b1b8be', borderRadius: 8, background: '#fff', padding: 20 };
+const fileStyle = { width: '100%', border: '1px solid #b1b8be', borderRadius: 6, padding: 10, background: '#fff' };
+const actionStyle = { minHeight: 42, border: 0, borderRadius: 6, background: '#256ef4', color: '#fff', fontWeight: 700, padding: '0 18px', cursor: 'pointer' };
+
+function StatusMessage({ text, error }) {
+  if (!text) return null;
+  return <div style={{ marginTop: 12, borderRadius: 6, padding: 12, background: error ? '#fdefec' : '#eaf6ec', color: error ? '#bd2c0f' : '#176b2c', fontSize: 14, lineHeight: 1.5 }}>{text}</div>;
+}
+
+function SidebarDataManager({ r, onDataChanged }) {
+  const inputRef = React.useRef(null);
+  const [files, setFiles] = useState([]);
+  const [classified, setClassified] = useState([]);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const applyFiles = async (next) => {
+    setBusy(true); setMessage('');
+    try {
+      if (!next.length) {
+        const reset = await apiJson('data/reset', { method: 'POST' });
+        setClassified([]); setError(false); setMessage(`기본 데이터 복원 · 학습 ${reset.rows}개월`);
+      } else {
+        const form = new FormData(); next.forEach(file => form.append('files', file));
+        const result = await apiJson('data/auto-ingest', { method: 'POST', body: form });
+        setClassified(result.classified || []); setError(false);
+        setMessage(`자동 분석·반영 완료 · 학습 ${result.rows}개월`);
+      }
+      onDataChanged();
+    } catch (e) {
+      setError(true); setMessage(`${e.message} · 기존 그래프는 유지됩니다.`);
+    } finally { setBusy(false); }
+  };
+
+  const addFiles = (event) => {
+    const incoming = Array.from(event.target.files || []);
+    const merged = [...files];
+    incoming.forEach(file => {
+      if (!merged.some(old => old.name === file.name && old.size === file.size && old.lastModified === file.lastModified)) merged.push(file);
+    });
+    setFiles(merged); event.target.value = ''; applyFiles(merged);
+  };
+  const removeFile = (index) => {
+    const next = files.filter((_, i) => i !== index); setFiles(next); applyFiles(next);
+  };
+  const clearAll = () => { setFiles([]); applyFiles([]); };
+  const infoFor = (name) => classified.find(item => item.filename === name);
+
+  return <div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+      <span style={{ fontSize: 15, fontWeight: 700 }}>데이터 추가/제거</span>
+      {files.length > 0 && <button onClick={clearAll} disabled={busy} style={{ border: 0, background: 'transparent', color: '#246beb', padding: 0, fontSize: 13, cursor: 'pointer' }}>전체 제거</button>}
+    </div>
+    <div style={{ border: '1px solid #b1b8be', borderRadius: 6, background: '#fff', padding: 10, minHeight: 54 }}>
+      {files.length === 0 ? <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, minWidth: 0 }}>
+        <span style={{ width: 8, height: 8, borderRadius: 99, background: '#228738', flexShrink: 0 }}></span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.dataName || DATA_NAME}>{r.dataName || DATA_NAME}</span>
+      </div> : files.map((file, index) => {
+        const info = infoFor(file.name);
+        return <div key={`${file.name}-${index}`} style={{ display: 'grid', gridTemplateColumns: '8px minmax(0,1fr) 22px', gap: 8, alignItems: 'center', padding: '5px 0', borderBottom: index < files.length - 1 ? '1px solid #e6e8ea' : 0 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 99, background: info ? '#228738' : '#8a949e' }}></span>
+          <span style={{ minWidth: 0 }}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }} title={file.name}>{file.name}</span>{info && <small style={{ color: '#246beb', fontSize: 11 }}>{info.label}</small>}</span>
+          <button aria-label={`${file.name} 제거`} title="제거" onClick={() => removeFile(index)} disabled={busy} style={{ border: 0, background: 'transparent', color: '#58616a', fontSize: 18, cursor: 'pointer', padding: 0 }}>×</button>
+        </div>;
+      })}
+    </div>
+    <input ref={inputRef} type="file" multiple accept=".csv,.xlsx,.xls" onChange={addFiles} style={{ display: 'none' }} />
+    <button onClick={() => inputRef.current && inputRef.current.click()} disabled={busy} style={{ width: '100%', minHeight: 44, marginTop: 10, border: '1px solid #58616a', borderRadius: 6, background: '#fff', color: '#1e2124', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>{busy ? '파일 분석 중…' : '파일 선택'}</button>
+    <p style={{ margin: '8px 0 0', color: '#6d7882', fontSize: 12, lineHeight: 1.45 }}>가격·원단위·공급·수요 파일을 한 번에 선택하면 자동 분류 후 그래프에 반영합니다.</p>
+    <StatusMessage text={message} error={error} />
+  </div>;
+}
+
+function BacktestTool() {
+  const [forecastFile, setForecastFile] = useState(null);
+  const [actualFile, setActualFile] = useState(null);
+  const [result, setResult] = useState(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const runUploaded = async () => {
+    setBusy(true); setMessage('');
+    try {
+      const form = new FormData(); form.append('forecast', forecastFile); form.append('actual', actualFile);
+      setResult(await apiJson('backtest/compare', { method: 'POST', body: form }));
+    } catch (e) { setMessage(e.message); setResult(null); } finally { setBusy(false); }
+  };
+  const runHistorical = async () => {
+    setBusy(true); setMessage('');
+    try { setResult(await apiJson('backtest/historical?months=12')); }
+    catch (e) { setMessage(e.message); setResult(null); } finally { setBusy(false); }
+  };
+  const metrics = result && (Array.isArray(result.metrics) ? result.metrics : [{ model: '업로드 비교', ...result.metrics }]);
+  return <div style={toolCard}>
+    <h3 style={{ margin: '0 0 6px', fontSize: 18 }}>8월 예측 오차 백테스트</h3>
+    <p style={{ margin: '0 0 14px', color: '#6d7882', fontSize: 14, lineHeight: 1.5 }}>7월에 저장한 예측표와 8월 KRX 실제가를 같은 년월끼리 1:1 비교합니다.</p>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      <label style={{ fontSize: 14 }}>사전 예측 파일<input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setForecastFile(e.target.files[0] || null)} style={{ ...fileStyle, marginTop: 6 }} /></label>
+      <label style={{ fontSize: 14 }}>KRX 실제가 파일<input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setActualFile(e.target.files[0] || null)} style={{ ...fileStyle, marginTop: 6 }} /></label>
+    </div>
+    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+      <button style={{ ...actionStyle, opacity: (!forecastFile || !actualFile || busy) ? .5 : 1 }} disabled={!forecastFile || !actualFile || busy} onClick={runUploaded}>업로드 파일 비교</button>
+      <button style={{ ...actionStyle, background: '#fff', color: '#1e2124', border: '1px solid #8a949e' }} disabled={busy} onClick={runHistorical}>최근 12개월 교차검증</button>
+    </div>
+    <StatusMessage text={message} error />
+    {metrics && <div style={{ overflowX: 'auto', marginTop: 14 }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+      <thead><tr>{['모델', 'MAE', 'RMSE', 'MAPE', '평균 편향'].map(h => <th key={h} style={{ textAlign: 'right', borderBottom: '1px solid #b1b8be', padding: 8 }}>{h}</th>)}</tr></thead>
+      <tbody>{metrics.map((m, i) => <tr key={i}>
+        <td style={{ padding: 8, fontWeight: 700 }}>{m.model}</td>
+        <td style={{ padding: 8, textAlign: 'right' }}>{Math.round(m.MAE).toLocaleString('ko-KR')}원</td>
+        <td style={{ padding: 8, textAlign: 'right' }}>{Math.round(m.RMSE).toLocaleString('ko-KR')}원</td>
+        <td style={{ padding: 8, textAlign: 'right' }}>{Number(m.MAPE).toFixed(2)}%</td>
+        <td style={{ padding: 8, textAlign: 'right' }}>{Math.round(m.BIAS).toLocaleString('ko-KR')}원</td>
+      </tr>)}</tbody>
+    </table></div>}
+  </div>;
+}
+
+function AugustPlanTools() {
+  return <section style={{ marginTop: 32 }}>
+    <div style={{ marginBottom: 14 }}><h2 style={{ margin: '0 0 4px', fontSize: 22 }}>8월 모델 검증</h2><p style={{ margin: 0, color: '#6d7882', fontSize: 14 }}>데이터 추가·제거는 왼쪽에서 수행하며, 업로드 데이터는 서버 재시작 시 기본 CSV로 복원됩니다.</p></div>
+    <BacktestTool />
+  </section>;
+}
+
 function App() {
   const [mode, setMode] = useState('auto');
   const [model, setModel] = useState('ols');
@@ -1775,12 +1898,12 @@ function App() {
   return (
     <Dashboard r={r} mode={mode} setMode={setMode} model={model} setModel={setModel}
       simMargin={simMargin} setSimMargin={setSimMargin} simIntensity={simIntensity} setSimIntensity={setSimIntensity}
-      seasonOption={seasonOption} setSeasonOption={setSeasonOption} />
+      seasonOption={seasonOption} setSeasonOption={setSeasonOption} onDataChanged={() => setReloadKey((k) => k + 1)} />
   );
 }
 
 /* ---------- dashboard (presentational) ---------- */
-function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin, simIntensity, setSimIntensity, seasonOption, setSeasonOption }) {
+function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin, simIntensity, setSimIntensity, seasonOption, setSeasonOption, onDataChanged }) {
   const manual = mode === 'manual';
 
   const columns = [
@@ -1793,7 +1916,7 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
   const rows = r.next1y.map((m) => ({
     month: fmtMonth(m.날짜).replace(/ /g, '\u00a0'),
     price: won(m.예측가격).replace(/ /g, '\u00a0'),
-    margin: Math.round(m.여유지수).toLocaleString('ko-KR') + '\u00a0만톤',
+    margin: (m.여유지수 / 10000).toLocaleString('ko-KR', { maximumFractionDigits: 2 }) + '\u00a0만톤',
     season: m.정산기
       ? <Badge variant="point" appearance="outline">정산기 (4–6월)</Badge>
       : <Badge variant="gray" appearance="outline">평달</Badge>,
@@ -1801,7 +1924,7 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
 
   const downloadCsv = () => {
     const header = ['예측 월', '예측 단가(원)', '할당 여유지수(만톤)', '정산기 여부'];
-    const body = r.next1y.map((m) => [fmtMonth(m.날짜), Math.round(m.예측가격), Math.round(m.여유지수), m.정산기 ? '정산기(4-6월)' : '평달'].join(','));
+    const body = r.next1y.map((m) => [fmtMonth(m.날짜), Math.round(m.예측가격), (m.여유지수 / 10000).toFixed(2), m.정산기 ? '정산기(4-6월)' : '평달'].join(','));
     const blob = new Blob(['\ufeff' + header.join(',') + '\n' + body.join('\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -1828,13 +1951,7 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
         <aside style={{ width: 340, flexShrink: 0, background: '#eef2f7', borderRight: '1px solid #b1b8be', padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
           <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700 }}>시뮬레이션 설정</h2>
 
-          <Field label="마스터셋 데이터">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 48, borderRadius: 6, border: '1px solid #b1b8be', background: '#fff', color: '#1e2124', fontSize: 15, padding: '0 16px' }}>
-              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 1000, background: '#228738', flexShrink: 0 }}></span>
-              <span style={{ wordBreak: 'break-all' }}>{r.dataName || DATA_NAME}</span>
-            </div>
-            <span style={{ fontSize: 13, color: '#6d7882' }}>서버 폴더의 마스터셋 · {r.history.length + 1}개월</span>
-          </Field>
+          <SidebarDataManager r={r} onDataChanged={onDataChanged} />
 
           <RadioGroup label="시뮬레이션 방식 선택" value={mode}
             onChange={setMode}
@@ -1926,6 +2043,7 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
               <Table columns={columns} rows={rows} />
             </div>
           </section>
+          <AugustPlanTools />
         </main>
       </div>
     </div>

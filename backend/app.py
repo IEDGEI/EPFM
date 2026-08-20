@@ -1,178 +1,318 @@
-"""
-발전부문 배출권 가격 예측 MVP — 백엔드 API 서버 (FastAPI)
-국립창원대학교 identity 팀
+"""발전부문 배출권 가격 예측 API 및 8월 고도화 기능."""
 
-역할:
-  1) 마스터셋 CSV를 읽고 OLS(statsmodels) + RandomForest(scikit-learn) 모델을 학습
-  2) GET /api/predict 로 향후 1년 연쇄 릴레이 예측 결과를 JSON 으로 제공
-  3) 프론트엔드(../frontend)를 정적 파일로 서빙 (같은 서버/같은 오리진)
+from __future__ import annotations
 
-실행:
-  pip install -r requirements.txt
-  uvicorn app:app --host 0.0.0.0 --port 8000
-  → 브라우저에서 http://localhost:8000  (대시보드)
-     API 단독 확인:  http://localhost:8000/api/predict
-"""
 import os
+from threading import RLock
+from typing import List
+
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+
+from data_pipeline import (
+    build_master_auto,
+    build_master_from_raw,
+    compare_forecast_actual,
+    read_table_bytes,
+    standardize_master,
+)
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(BASE_DIR, "발전부문_배출권_분석_마스터셋.csv")
 FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
+FEATURES = ["할당량_여유_지수", "X_원단위", "배출권가격_1달전", "정산기_시즌스위치", "리스크_2024더미"]
 
-FEATURES = ['할당량_여유_지수', 'X_원단위', '배출권가격_1달전', '정산기_시즌스위치', '리스크_2024더미']
+
+def _model_frame(df: pd.DataFrame) -> pd.DataFrame:
+    return (
+        df.dropna(subset=["날짜", "y_가격", *FEATURES])
+        .sort_values("날짜")
+        .reset_index(drop=True)
+    )
 
 
-# -------------------------------------------------------------
-# 1. 마스터 데이터셋 로드 및 전처리 (원본 load_data 로직)
-# -------------------------------------------------------------
-def load_data():
-    df = pd.read_csv(CSV_PATH, encoding='utf-8-sig')
-    cols = list(df.columns)
-
-    if '총_할당량' in df.columns and '총_배출량' in df.columns:
-        df['할당량_여유_지수'] = df['총_할당량'] - df['총_배출량']
-    elif '발전부문_수급과부족지수' in df.columns:
-        df['할당량_여유_지수'] = df['발전부문_수급과부족지수'] * -1
+def _fit_models(df: pd.DataFrame, tune_rf: bool = True):
+    train = _model_frame(df)
+    if len(train) < 18:
+        raise ValueError("모델 학습에 필요한 유효 데이터가 18개월 미만입니다.")
+    x, y = train[FEATURES].astype(float), train["y_가격"].astype(float)
+    # 가격을 로그 공간에서 학습해 장기 연쇄 예측이 음수로 붕괴하는 것을 방지한다.
+    ols = sm.OLS(np.log1p(y), sm.add_constant(x, has_constant="add")).fit()
+    base_rf = RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=-1)
+    if tune_rf and len(train) >= 30:
+        search = GridSearchCV(
+            base_rf,
+            {"max_depth": [3, 5, None], "min_samples_leaf": [1, 2, 4]},
+            scoring="neg_mean_absolute_error",
+            cv=TimeSeriesSplit(n_splits=4),
+            n_jobs=-1,
+        ).fit(x, y)
+        rf = search.best_estimator_
     else:
-        df['할당량_여유_지수'] = df[cols[1]] * -1
-
-    df['y_가격'] = df['KRX_배출권가격'] if 'KRX_배출권가격' in df.columns else df[cols[-1]]
-    df['X_원단위'] = df['원단위'] if '원단위' in df.columns else df[cols[1]]
-    df['배출권가격_1달전'] = df['y_가격'].shift(1)
-    df['정산기_시즌스위치'] = df['월'].isin([4, 5, 6]).astype(int) if '월' in df.columns else np.zeros(len(df))
-    df['리스크_2024더미'] = (df['년도'] == 2024).astype(int) if '년도' in df.columns else np.zeros(len(df))
-
-    if '년도' in df.columns and '월' in df.columns:
-        df['날짜'] = pd.to_datetime(df['년도'].astype(int).astype(str) + '-' + df['월'].astype(int).astype(str) + '-01', errors='coerce')
-    else:
-        df['날짜'] = pd.date_range(start='2021-01-01', periods=len(df), freq='MS')
-
-    return df.dropna(subset=['날짜', 'y_가격', '할당량_여유_지수', 'X_원단위', '배출권가격_1달전']).sort_values('날짜').reset_index(drop=True)
+        rf = base_rf.set_params(max_depth=5, min_samples_leaf=2).fit(x, y)
+    return train, ols, rf
 
 
-# -------------------------------------------------------------
-# 2. 모델 학습 (서버 시작 시 1회)
-# -------------------------------------------------------------
-DF = load_data()
-_X = DF[FEATURES]
-_y = DF['y_가격']
-OLS_MODEL = sm.OLS(_y, sm.add_constant(_X)).fit()
-RF_MODEL = RandomForestRegressor(n_estimators=100, random_state=42)
-RF_MODEL.fit(_X, _y)
+class ModelState:
+    def __init__(self):
+        self.lock = RLock()
+        self.version = 0
+        self.replace(pd.read_csv(CSV_PATH, encoding="utf-8-sig"), os.path.basename(CSV_PATH))
+
+    def replace(self, raw: pd.DataFrame, source: str, warnings: list[str] | None = None):
+        standardized, local_warnings = standardize_master(raw)
+        train, ols, rf = _fit_models(standardized, tune_rf=True)
+        with self.lock:
+            self.df = train
+            self.ols = ols
+            self.rf = rf
+            self.source = source
+            self.warnings = list(warnings or []) + local_warnings
+            self.version += 1
+
+    def snapshot(self):
+        with self.lock:
+            return self.df.copy(), self.ols, self.rf, self.source, list(self.warnings), self.version
+
+    def status(self):
+        df, ols, rf, source, warnings, version = self.snapshot()
+        return {
+            "status": "ok",
+            "rows": int(len(df)),
+            "data": source,
+            "version": version,
+            "periodStart": df["날짜"].min().strftime("%Y-%m"),
+            "periodEnd": df["날짜"].max().strftime("%Y-%m"),
+            "warnings": warnings,
+            "modelInfo": {
+                "olsAdjustedR2": float(ols.rsquared_adj),
+                "rfMaxDepth": rf.get_params()["max_depth"],
+                "rfMinSamplesLeaf": int(rf.get_params()["min_samples_leaf"]),
+            },
+        }
 
 
-# -------------------------------------------------------------
-# 3. 향후 1년 연쇄 릴레이 예측 (원본 로직)
-# -------------------------------------------------------------
-def run_forecast(mode, model, sim_margin, sim_intensity, season_option):
-    auto = (mode == 'auto')
-    latest = DF.iloc[-1]
-    latest_date = DF['날짜'].max()
+STATE = ModelState()
+
+
+def _predict_row(model, model_name: str, row: pd.DataFrame) -> float:
+    row = row[FEATURES].astype(float)
+    if model_name == "ols":
+        prediction = model.predict(sm.add_constant(row, has_constant="add"))
+        log_value = float(prediction.iloc[0] if hasattr(prediction, "iloc") else prediction[0])
+        return float(np.expm1(np.clip(log_value, 0, 20)))
+    return float(model.predict(row)[0])
+
+
+def _seasonal_inputs(df: pd.DataFrame, date: pd.Timestamp) -> tuple[float, float]:
+    same_month = df[df["월"] == date.month]
+    margin = float(same_month["할당량_여유_지수"].median())
+    intensity = float(same_month["X_원단위"].median())
+    yearly = df.groupby("년도")[["할당량_여유_지수", "X_원단위"]].mean().sort_index()
+    margin_trend = float(yearly["할당량_여유_지수"].diff().median()) if len(yearly) > 1 else 0.0
+    intensity_trend = float(yearly["X_원단위"].diff().median()) if len(yearly) > 1 else 0.0
+    latest = df["날짜"].max()
+    years_ahead = max(0.0, (date.year - latest.year) + (date.month - latest.month) / 12)
+    return margin + margin_trend * years_ahead, intensity + intensity_trend * years_ahead
+
+
+def run_forecast(mode: str, model: str, sim_margin: float, sim_intensity: float, season_option: str):
+    df, ols, rf, source, warnings, version = STATE.snapshot()
+    auto = mode == "auto"
+    latest = df.iloc[-1]
+    latest_date = df["날짜"].max()
     today = pd.Timestamp.now().normalize().replace(day=1)
     target_end = today + pd.DateOffset(months=12)
-
+    chosen = ols if model == "ols" else rf
     rows = []
-    lag = latest['y_가격']
-    cur = latest_date + pd.DateOffset(months=1)
-    while cur <= target_end:
-        mon = cur.month
-        if auto or season_option == 'auto':
-            season = 1 if mon in [4, 5, 6] else 0
-        elif season_option == 'force-on':
-            season = 1
+    lag = float(latest["y_가격"])
+    current = latest_date + pd.DateOffset(months=1)
+    while current <= target_end:
+        if auto or season_option == "auto":
+            season = int(current.month in (4, 5, 6))
         else:
-            season = 0
-
-        hist_m = DF[DF['날짜'].dt.month == mon]
-        base_intensity = hist_m['X_원단위'].mean() if len(hist_m) else latest['X_원단위']
-        base_margin = hist_m['할당량_여유_지수'].mean() if len(hist_m) else latest['할당량_여유_지수']
-        tightening = max(0, cur.year - latest_date.year) * 0.4
-        risk = 1 if cur.year == 2024 else 0
-
-        if auto:
-            step_intensity = base_intensity
-            step_margin = base_margin - tightening
-        else:
-            step_margin = base_margin + sim_margin - tightening
-            step_intensity = base_intensity * (1 + sim_intensity / 100)
-
-        base_input = pd.DataFrame([{'할당량_여유_지수': base_margin, 'X_원단위': base_intensity, '배출권가격_1달전': lag, '정산기_시즌스위치': season, '리스크_2024더미': risk}])
-        step_input = pd.DataFrame([{'할당량_여유_지수': step_margin, 'X_원단위': step_intensity, '배출권가격_1달전': lag, '정산기_시즌스위치': season, '리스크_2024더미': risk}])
-
-        if model == 'ols':
-            ci = sm.add_constant(step_input, has_constant='add')
-            ci['const'] = 1.0
-            ci = ci[['const'] + FEATURES]
-            pred = float(OLS_MODEL.predict(ci)[0])
-        else:
-            if auto:
-                pred = float(RF_MODEL.predict(step_input)[0])
-            else:
-                rf_base = float(RF_MODEL.predict(base_input)[0])
-                rf_raw = float(RF_MODEL.predict(step_input)[0])
-                smooth = (sim_intensity * (rf_base * 0.015)) - (sim_margin * 45.0)
-                pred = rf_raw + smooth * 0.3 if rf_raw != rf_base else rf_base + smooth
-
-        pred = max(0.0, pred)
-        rows.append({'날짜': cur, '예측가격': pred, '여유지수': float(step_margin), '정산기': int(season)})
+            season = int(season_option == "force-on")
+        base_margin, base_intensity = _seasonal_inputs(df, current)
+        margin = base_margin if auto else base_margin + sim_margin * 10_000
+        intensity = base_intensity if auto else base_intensity * (1 + sim_intensity / 100)
+        step = pd.DataFrame([{
+            "할당량_여유_지수": margin,
+            "X_원단위": intensity,
+            "배출권가격_1달전": lag,
+            "정산기_시즌스위치": season,
+            "리스크_2024더미": int(current.year == 2024),
+        }])
+        pred = max(0.0, _predict_row(chosen, model, step))
+        rows.append({"날짜": current, "예측가격": pred, "여유지수": float(margin), "정산기": season})
         lag = pred
-        cur = cur + pd.DateOffset(months=1)
+        current += pd.DateOffset(months=1)
 
-    fut = pd.DataFrame(rows)
-    iso = lambda d: pd.Timestamp(d).strftime('%Y-%m-%d')
-    rec = lambda r: {'date': iso(r['날짜']), '예측가격': r['예측가격'], '여유지수': r['여유지수'], '정산기': r['정산기']}
-
-    next1y = [rec(r) for _, r in fut[fut['날짜'] >= today].iterrows()]
-    next_month = [rec(r) for _, r in fut[fut['날짜'] > today].iterrows()]
-    prices = [r['예측가격'] for r in next1y]
-
+    future = pd.DataFrame(rows)
+    iso = lambda value: pd.Timestamp(value).strftime("%Y-%m-%d")
+    rec = lambda row: {"date": iso(row["날짜"]), "예측가격": float(row["예측가격"]), "여유지수": float(row["여유지수"]), "정산기": int(row["정산기"])}
+    next_year = [rec(row) for _, row in future[future["날짜"].between(today, target_end)].iterrows()]
+    next_month = [row for row in next_year if pd.Timestamp(row["date"]) > today]
+    prices = [row["예측가격"] for row in next_year]
     return {
-        'history': [{'date': iso(r['날짜']), 'y': float(r['y_가격'])} for _, r in DF.iterrows()],
-        'latestDate': iso(latest_date),
-        'today': iso(today),
-        'targetEnd': iso(target_end),
-        'future': [rec(r) for _, r in fut.iterrows()],
-        'next1y': next1y,
-        'nextMonth': next_month,
-        'todayPred': next1y[0] if next1y else None,
-        'nextPred': next_month[0] if next_month else (next1y[0] if next1y else None),
-        'lastPred': next1y[-1] if next1y else None,
-        'minP': min(prices) if prices else 0,
-        'maxP': max(prices) if prices else 0,
-        'dataName': os.path.basename(CSV_PATH),
+        "history": [{"date": iso(row["날짜"]), "y": float(row["y_가격"])} for _, row in df.iterrows()],
+        "latestDate": iso(latest_date), "today": iso(today), "targetEnd": iso(target_end),
+        "future": [rec(row) for _, row in future.iterrows()], "next1y": next_year, "nextMonth": next_month,
+        "todayPred": next_year[0] if next_year else None,
+        "nextPred": next_month[0] if next_month else (next_year[0] if next_year else None),
+        "lastPred": next_year[-1] if next_year else None,
+        "minP": min(prices) if prices else 0, "maxP": max(prices) if prices else 0,
+        "dataName": source, "dataVersion": version, "warnings": warnings,
     }
 
 
-# -------------------------------------------------------------
-# 4. FastAPI 앱
-# -------------------------------------------------------------
-app = FastAPI(title="배출권 가격 예측 MVP API")
+def historical_backtest(months: int = 12):
+    df, *_ = STATE.snapshot()
+    start = max(18, len(df) - months)
+    if len(df) - start < 1:
+        raise ValueError("백테스트에 사용할 데이터가 부족합니다.")
+    records = []
+    for index in range(start, len(df)):
+        train, ols, rf = _fit_models(df.iloc[:index], tune_rf=False)
+        test = df.iloc[[index]]
+        for name, fitted in (("OLS", ols), ("RandomForest", rf)):
+            pred = max(0.0, _predict_row(fitted, "ols" if name == "OLS" else "ai", test))
+            actual = float(test["y_가격"].iloc[0])
+            records.append({
+                "date": test["날짜"].iloc[0].strftime("%Y-%m-%d"), "model": name,
+                "forecast": pred, "actual": actual, "error": pred - actual,
+                "ape": abs(pred - actual) / abs(actual) * 100 if actual else None,
+            })
+    detail = pd.DataFrame(records)
+    metrics = []
+    for name, group in detail.groupby("model"):
+        metrics.append({
+            "model": name,
+            "MAE": float(mean_absolute_error(group["actual"], group["forecast"])),
+            "RMSE": float(np.sqrt(mean_squared_error(group["actual"], group["forecast"]))),
+            "MAPE": float(group["ape"].mean()), "BIAS": float(group["error"].mean()),
+        })
+    return {"months": len(detail["date"].unique()), "metrics": metrics, "detail": records}
+
+
+app = FastAPI(title="배출권 가격 예측 MVP API", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "rows": int(len(DF)), "data": os.path.basename(CSV_PATH)}
+    return STATE.status()
 
 
 @app.get("/api/predict")
 def predict(
     mode: str = Query("auto", pattern="^(auto|manual)$"),
     model: str = Query("ols", pattern="^(ols|ai)$"),
-    simMargin: float = 0.0,
-    simIntensity: float = 0.0,
+    simMargin: float = Query(0.0, ge=-30, le=30),
+    simIntensity: float = Query(0.0, ge=-10, le=10),
     seasonOption: str = Query("auto", pattern="^(auto|force-on|force-off)$"),
 ):
     return run_forecast(mode, model, simMargin, simIntensity, seasonOption)
 
 
-# 프론트엔드 정적 서빙 (API 라우트 뒤에 마운트해야 함)
+@app.post("/api/data/master")
+async def upload_master(file: UploadFile = File(...)):
+    try:
+        raw = read_table_bytes(await file.read(), file.filename or "uploaded.csv")
+        STATE.replace(raw, file.filename or "uploaded.csv")
+        return STATE.status()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/data/auto-ingest")
+async def auto_ingest(files: List[UploadFile] = File(...)):
+    """한 선택창에서 받은 파일을 자동 분류해 마스터셋을 만들고 즉시 적용한다."""
+    try:
+        named_frames = []
+        for file in files:
+            name = file.filename or "uploaded.csv"
+            named_frames.append((name, read_table_bytes(await file.read(), name)))
+        if not named_frames:
+            raise ValueError("선택된 파일이 없습니다.")
+
+        # 완성된 표준 마스터셋 하나를 선택한 경우도 같은 창에서 바로 처리한다.
+        if len(named_frames) == 1:
+            name, frame = named_frames[0]
+            try:
+                STATE.replace(frame, name)
+                result = STATE.status()
+                result["classified"] = [{"filename": name, "type": "master", "label": "표준 마스터셋", "reason": "필수 컬럼과 수급지수 계산 근거 확인"}]
+                return result
+            except ValueError:
+                pass
+
+        master, warnings, classified = build_master_auto(named_frames)
+        export = master.drop(columns=["날짜", "y_가격", "X_원단위", "배출권가격_1달전", "정산기_시즌스위치", "리스크_2024더미"], errors="ignore")
+        STATE.replace(export, "자동 분류한 업로드 데이터", warnings)
+        result = STATE.status()
+        result["classified"] = classified
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/data/reset")
+def reset_master():
+    try:
+        STATE.replace(pd.read_csv(CSV_PATH, encoding="utf-8-sig"), os.path.basename(CSV_PATH))
+        return STATE.status()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/backtest/historical")
+def get_historical_backtest(months: int = Query(12, ge=3, le=24)):
+    try:
+        return historical_backtest(months)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/backtest/compare")
+async def uploaded_backtest(forecast: UploadFile = File(...), actual: UploadFile = File(...)):
+    try:
+        pred = read_table_bytes(await forecast.read(), forecast.filename or "forecast.csv")
+        real = read_table_bytes(await actual.read(), actual.filename or "actual.csv")
+        detail, metrics = compare_forecast_actual(pred, real)
+        return {"metrics": metrics, "detail": detail.replace({np.nan: None}).to_dict(orient="records")}
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/data/build-master")
+async def create_master(
+    intensity: UploadFile = File(...), allocation: UploadFile = File(...),
+    emissions: UploadFile = File(...), scope3: UploadFile = File(...),
+    prices: List[UploadFile] = File(...), apply: bool = Query(True),
+):
+    try:
+        master, warnings = build_master_from_raw(
+            read_table_bytes(await intensity.read(), intensity.filename or "intensity.csv"),
+            read_table_bytes(await allocation.read(), allocation.filename or "allocation.csv"),
+            read_table_bytes(await emissions.read(), emissions.filename or "emissions.csv"),
+            read_table_bytes(await scope3.read(), scope3.filename or "scope3.csv"),
+            [read_table_bytes(await file.read(), file.filename or "price.csv") for file in prices],
+        )
+        export = master.drop(columns=["날짜", "y_가격", "X_원단위", "배출권가격_1달전", "정산기_시즌스위치", "리스크_2024더미"], errors="ignore")
+        if apply:
+            STATE.replace(export, "업로드 원본에서 생성한 표준 마스터셋", warnings)
+        return {"rows": len(export), "warnings": warnings, "applied": apply, "csv": export.to_csv(index=False)}
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

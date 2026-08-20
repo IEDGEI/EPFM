@@ -5,3 +5,5 @@ numpy
 statsmodels
 scipy
 scikit-learn
+python-multipart
+openpyxl
