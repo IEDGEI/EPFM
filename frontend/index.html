@@ -1775,18 +1775,13 @@ function SidebarDataManager({ r, onDataChanged }) {
     setBusy(true); setMessage('');
     try {
       if (!next.length) {
-        const reset = await apiJson('data/reset', { method: 'POST' });
-        setClassified([]); setError(false); setMessage(`기본 데이터 복원 · 학습 ${reset.rows}개월`);
+        await apiJson('data/reset', { method: 'POST' });
+        setClassified([]); setError(false); setMessage('');
       } else {
         const endpoint = `data/auto-ingest${resetBefore ? '?reset=true' : ''}`;
         const form = new FormData(); next.forEach(file => form.append('files', file));
         const result = await apiJson(endpoint, { method: 'POST', body: form });
-        setClassified(result.classified || []); setError(false);
-        const update = result.actualUpdate;
-        const updateText = update && update.actualMonths
-          ? `실제 ${update.actualMonths}개월 반영 · ${update.bridgedMonths || 0}개월 연결 예측 후 재계산`
-          : '자동 분석·반영 완료';
-        setMessage(`${updateText} · 학습 ${result.rows}개월`);
+        setClassified(result.classified || []); setError(false); setMessage('');
       }
       onDataChanged();
     } catch (e) {
@@ -1829,7 +1824,7 @@ function SidebarDataManager({ r, onDataChanged }) {
     <input ref={inputRef} type="file" multiple accept=".csv,.xlsx,.xls" onChange={addFiles} style={{ display: 'none' }} />
     <button onClick={() => inputRef.current && inputRef.current.click()} disabled={busy} style={{ width: '100%', minHeight: 44, marginTop: 10, border: '1px solid #58616a', borderRadius: 6, background: '#fff', color: '#1e2124', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>{busy ? '파일 분석 중…' : '파일 선택'}</button>
     <p style={{ margin: '8px 0 0', color: '#6d7882', fontSize: 12, lineHeight: 1.45 }}>실제 가격을 추가하면 해당 월을 실제값으로 교체하고 이후 월을 다시 예측합니다. 원단위·공급·수요 파일도 함께 자동 반영됩니다.</p>
-    <StatusMessage text={message} error={error} />
+    <StatusMessage text={error ? message : ''} error={error} />
   </div>;
 }
 
