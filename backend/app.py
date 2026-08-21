@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from threading import RLock
 from typing import List
 
@@ -19,7 +20,10 @@ from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from data_pipeline import (
     build_master_auto,
     build_master_from_raw,
+    classify_source,
     compare_forecast_actual,
+    merge_price_updates,
+    merge_standardized_updates,
     read_table_bytes,
     standardize_master,
 )
@@ -32,6 +36,10 @@ FEATURES = ["할당량_여유_지수", "X_원단위", "배출권가격_1달전",
 
 
 def _model_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if "가격_상태" in df.columns:
+        # 실제값이 도착하기 전의 연결용 예측행은 그래프에는 보존하되,
+        # 모델 재학습 데이터에는 넣지 않는다.
+        df = df[df["가격_상태"] != "예측"]
     return (
         df.dropna(subset=["날짜", "y_가격", *FEATURES])
         .sort_values("날짜")
@@ -65,18 +73,64 @@ class ModelState:
     def __init__(self):
         self.lock = RLock()
         self.version = 0
-        self.replace(pd.read_csv(CSV_PATH, encoding="utf-8-sig"), os.path.basename(CSV_PATH))
+        self.forecast_snapshots: dict[str, dict] = {}
+        self.base_raw = pd.read_csv(CSV_PATH, encoding="utf-8-sig")
+        self.replace(self.base_raw, os.path.basename(CSV_PATH))
+        self.base_master = self.master.copy()
 
     def replace(self, raw: pd.DataFrame, source: str, warnings: list[str] | None = None):
         standardized, local_warnings = standardize_master(raw)
         train, ols, rf = _fit_models(standardized, tune_rf=True)
         with self.lock:
+            self.master = standardized.copy()
             self.df = train
             self.ols = ols
             self.rf = rf
             self.source = source
             self.warnings = list(warnings or []) + local_warnings
             self.version += 1
+            self.forecast_snapshots = {}
+
+    def reset(self):
+        self.replace(self.base_raw.copy(), os.path.basename(CSV_PATH))
+
+    def master_snapshot(self):
+        with self.lock:
+            return self.master.copy()
+
+    def remember_forecast(self, model: str, rows: list[dict], mode: str):
+        if mode != "auto" or not rows:
+            return
+        with self.lock:
+            self.forecast_snapshots[model] = {
+                "version": self.version,
+                "created": time.time(),
+                "rows": pd.DataFrame(rows).copy(),
+            }
+
+    def latest_forecast_rows(self) -> pd.DataFrame:
+        with self.lock:
+            candidates = [
+                item for item in self.forecast_snapshots.values()
+                if item.get("version") == self.version
+            ]
+            if not candidates:
+                return pd.DataFrame()
+            return max(candidates, key=lambda item: item.get("created", 0))["rows"].copy()
+
+    def apply_master_update(self, incoming: pd.DataFrame, source: str, warnings: list[str] | None = None, bridge_rows: pd.DataFrame | None = None):
+        bridge = self.latest_forecast_rows() if bridge_rows is None else bridge_rows
+        # 현재 마스터를 기준으로 누적한다. 따라서 다음 달 실제 가격만
+        # 올려도 앞서 반영한 실제 월과 연결 예측이 유지된다.
+        merged, merge_warnings, meta = merge_standardized_updates(self.master_snapshot(), incoming, bridge)
+        self.replace(merged, source, list(warnings or []) + merge_warnings)
+        return meta
+
+    def apply_price_update(self, price_frames: list[pd.DataFrame], source: str, warnings: list[str] | None = None, bridge_rows: pd.DataFrame | None = None):
+        bridge = self.latest_forecast_rows() if bridge_rows is None else bridge_rows
+        merged, merge_warnings, meta = merge_price_updates(self.master_snapshot(), price_frames, bridge)
+        self.replace(merged, source, list(warnings or []) + merge_warnings)
+        return meta
 
     def snapshot(self):
         with self.lock:
@@ -84,11 +138,14 @@ class ModelState:
 
     def status(self):
         df, ols, rf, source, warnings, version = self.snapshot()
+        master = self.master_snapshot()
         return {
             "status": "ok",
             "rows": int(len(df)),
             "data": source,
             "version": version,
+            "masterRows": int(len(master)),
+            "forecastBridgeRows": int((master.get("가격_상태", pd.Series(dtype=str)) == "예측").sum()),
             "periodStart": df["날짜"].min().strftime("%Y-%m"),
             "periodEnd": df["날짜"].max().strftime("%Y-%m"),
             "warnings": warnings,
@@ -151,7 +208,10 @@ def run_forecast(mode: str, model: str, sim_margin: float, sim_intensity: float,
             "리스크_2024더미": int(current.year == 2024),
         }])
         pred = max(0.0, _predict_row(chosen, model, step))
-        rows.append({"날짜": current, "예측가격": pred, "여유지수": float(margin), "정산기": season})
+        rows.append({
+            "날짜": current, "예측가격": pred, "여유지수": float(margin),
+            "원단위": float(intensity), "정산기": season,
+        })
         lag = pred
         current += pd.DateOffset(months=1)
 
@@ -161,15 +221,35 @@ def run_forecast(mode: str, model: str, sim_margin: float, sim_intensity: float,
     next_year = [rec(row) for _, row in future[future["날짜"].between(today, target_end)].iterrows()]
     next_month = [row for row in next_year if pd.Timestamp(row["date"]) > today]
     prices = [row["예측가격"] for row in next_year]
+    actual_today = df[df["날짜"] == today]
+    if not actual_today.empty:
+        today_row = actual_today.iloc[-1]
+        today_pred = {
+            "date": iso(today), "예측가격": float(today_row["y_가격"]),
+            "여유지수": float(today_row["할당량_여유_지수"]),
+            "정산기": int(today_row["정산기_시즌스위치"]),
+        }
+    else:
+        today_pred = next_year[0] if next_year else None
+    next_pred = next_month[0] if next_month else (next_year[0] if next_year else today_pred)
+    STATE.remember_forecast(model, rows, mode)
+    master = STATE.master_snapshot()
+    bridged = master[master.get("가격_상태", pd.Series("실제", index=master.index)) == "예측"] if "가격_상태" in master else master.iloc[0:0]
+    bridge_records = [
+        {"date": iso(row["날짜"]), "예측가격": float(row["y_가격"]), "여유지수": float(row.get("할당량_여유_지수", 0.0)), "원단위": float(row.get("원단위", 0.0))}
+        for _, row in bridged.iterrows()
+    ]
     return {
         "history": [{"date": iso(row["날짜"]), "y": float(row["y_가격"])} for _, row in df.iterrows()],
+        "forecastHistory": bridge_records,
         "latestDate": iso(latest_date), "today": iso(today), "targetEnd": iso(target_end),
         "future": [rec(row) for _, row in future.iterrows()], "next1y": next_year, "nextMonth": next_month,
-        "todayPred": next_year[0] if next_year else None,
-        "nextPred": next_month[0] if next_month else (next_year[0] if next_year else None),
+        "todayPred": today_pred,
+        "nextPred": next_pred,
         "lastPred": next_year[-1] if next_year else None,
         "minP": min(prices) if prices else 0, "maxP": max(prices) if prices else 0,
         "dataName": source, "dataVersion": version, "warnings": warnings,
+        "actualRows": int(len(df)), "bridgeRows": len(bridge_records),
     }
 
 
@@ -226,16 +306,21 @@ def predict(
 async def upload_master(file: UploadFile = File(...)):
     try:
         raw = read_table_bytes(await file.read(), file.filename or "uploaded.csv")
-        STATE.replace(raw, file.filename or "uploaded.csv")
-        return STATE.status()
+        meta = STATE.apply_master_update(raw, file.filename or "uploaded.csv")
+        result = STATE.status()
+        result["actualUpdate"] = meta
+        return result
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/data/auto-ingest")
-async def auto_ingest(files: List[UploadFile] = File(...)):
+async def auto_ingest(files: List[UploadFile] = File(...), reset: bool = Query(False)):
     """한 선택창에서 받은 파일을 자동 분류해 마스터셋을 만들고 즉시 적용한다."""
     try:
+        bridge_before_reset = STATE.latest_forecast_rows() if reset else None
+        if reset:
+            STATE.reset()
         named_frames = []
         for file in files:
             name = file.filename or "uploaded.csv"
@@ -243,22 +328,37 @@ async def auto_ingest(files: List[UploadFile] = File(...)):
         if not named_frames:
             raise ValueError("선택된 파일이 없습니다.")
 
-        # 완성된 표준 마스터셋 하나를 선택한 경우도 같은 창에서 바로 처리한다.
-        if len(named_frames) == 1:
+        # 표준 마스터셋 하나를 올린 경우에는 가격 파일로 오인하지 않고
+        # 기존 월별 데이터와 병합한다.
+        if len(named_frames) == 1 and {"년도", "월", "원단위", "KRX_배출권가격"}.issubset(named_frames[0][1].columns):
             name, frame = named_frames[0]
-            try:
-                STATE.replace(frame, name)
-                result = STATE.status()
-                result["classified"] = [{"filename": name, "type": "master", "label": "표준 마스터셋", "reason": "필수 컬럼과 수급지수 계산 근거 확인"}]
-                return result
-            except ValueError:
-                pass
+            meta = STATE.apply_master_update(frame, name, bridge_rows=bridge_before_reset)
+            result = STATE.status()
+            result["classified"] = [{"filename": name, "type": "master", "label": "표준 마스터셋", "reason": "필수 컬럼 확인"}]
+            result["actualUpdate"] = meta
+            return result
 
-        master, warnings, classified = build_master_auto(named_frames)
-        export = master.drop(columns=["날짜", "y_가격", "X_원단위", "배출권가격_1달전", "정산기_시즌스위치", "리스크_2024더미"], errors="ignore")
-        STATE.replace(export, "자동 분류한 업로드 데이터", warnings)
+        classified = []
+        kinds = []
+        for name, frame in named_frames:
+            try:
+                kind, reason = classify_source(frame, name)
+            except ValueError:
+                kind, reason = "master", "표준 마스터셋 컬럼 확인"
+            kinds.append(kind)
+            classified.append({"filename": name, "type": kind, "label": {"price": "배출권 가격", "intensity": "원단위", "supply": "공급(할당량)", "demand": "수요(배출량)", "scope3": "Scope3(보조지표)", "master": "표준 마스터셋"}.get(kind, kind), "reason": reason})
+
+        # 가격 파일만 추가하는 경우에도 기존 설명변수와 병합하고, 저장된
+        # 예측 스냅샷의 사이 구간을 연결한 뒤 실제값을 기준으로 재학습한다.
+        if set(kinds).issubset({"price"}) or ("price" in kinds and not {"intensity", "supply", "demand"}.intersection(kinds)):
+            meta = STATE.apply_price_update([frame for (name, frame), kind in zip(named_frames, kinds) if kind == "price"], "실제 가격 업데이트", bridge_rows=bridge_before_reset)
+        else:
+            master, warnings, _ = build_master_auto(named_frames)
+            export = master.drop(columns=["날짜", "y_가격", "X_원단위", "배출권가격_1달전", "정산기_시즌스위치", "리스크_2024더미"], errors="ignore")
+            meta = STATE.apply_master_update(export, "자동 분류한 업로드 데이터", warnings, bridge_rows=bridge_before_reset)
         result = STATE.status()
         result["classified"] = classified
+        result["actualUpdate"] = meta
         return result
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -267,7 +367,7 @@ async def auto_ingest(files: List[UploadFile] = File(...)):
 @app.post("/api/data/reset")
 def reset_master():
     try:
-        STATE.replace(pd.read_csv(CSV_PATH, encoding="utf-8-sig"), os.path.basename(CSV_PATH))
+        STATE.reset()
         return STATE.status()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -11,6 +11,7 @@ import pandas as pd
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MASTER_REQUIRED = ("년도", "월", "원단위", "KRX_배출권가격")
+PRICE_STATUS = "가격_상태"
 
 
 def read_table_bytes(payload: bytes, filename: str) -> pd.DataFrame:
@@ -57,6 +58,11 @@ def standardize_master(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     missing = [c for c in MASTER_REQUIRED if c not in df.columns]
     if missing:
         raise ValueError("마스터셋 필수 컬럼 누락: " + ", ".join(missing))
+    # 기본 CSV와 원본 업로드는 실제 관측값으로 취급한다. 실제값이 도착하기
+    # 전까지의 연쇄 예측 연결 구간만 "예측"으로 별도 표시한다.
+    if PRICE_STATUS not in df.columns:
+        df[PRICE_STATUS] = "실제"
+    df[PRICE_STATUS] = df[PRICE_STATUS].fillna("실제").astype(str)
 
     df["년도"] = _numeric(df["년도"])
     df["월"] = _numeric(df["월"])
@@ -243,6 +249,136 @@ def _price_monthly(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
     result = pd.concat(parts, ignore_index=True)
     result[["년도", "월"]] = result[["년도", "월"]].astype(int)
     return result.groupby(["년도", "월"], as_index=False)["KRX_배출권가격"].mean()
+
+
+def monthly_price_table(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
+    """가격 원본 여러 개를 년월 평균 가격 표로 변환한다."""
+    return _price_monthly(frames)
+
+
+def _month_template(base: pd.DataFrame, year: int, month: int) -> dict:
+    """새로운 실제 가격 월에 사용할 설명변수의 계절 중앙값을 만든다."""
+    same = base[base["월"] == month]
+    if same.empty:
+        same = base
+    template = {}
+    numeric = base.select_dtypes(include=np.number).columns
+    for col in numeric:
+        if col in ("년도", "월", "KRX_배출권가격"):
+            continue
+        value = pd.to_numeric(same[col], errors="coerce").median() if col in same else np.nan
+        if pd.isna(value):
+            value = pd.to_numeric(base[col], errors="coerce").median() if col in base else np.nan
+        if not pd.isna(value):
+            template[col] = float(value)
+    template.update({"년도": int(year), "월": int(month)})
+    return template
+
+
+def _bridge_frame(
+    base: pd.DataFrame,
+    bridge_rows: pd.DataFrame | None,
+    actual_keys: set[tuple[int, int]],
+    before: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """기존 예측 스냅샷을 마스터셋의 연결 구간 행으로 변환한다."""
+    if bridge_rows is None or bridge_rows.empty:
+        return pd.DataFrame(columns=base.columns)
+    keys = set(zip(base["년도"].astype(int), base["월"].astype(int)))
+    rows = []
+    for record in bridge_rows.to_dict("records"):
+        date = pd.to_datetime(record.get("날짜") or record.get("date"), errors="coerce")
+        if pd.isna(date):
+            continue
+        if before is not None and date >= before:
+            # 실제값이 도착한 월부터 뒤는 이전 스냅샷이 아니라 새 실제값을
+            # 기준으로 다시 계산해야 하므로 오래된 예측을 넣지 않는다.
+            continue
+        key = (int(date.year), int(date.month))
+        if key in keys or key in actual_keys:
+            continue
+        row = _month_template(base, key[0], key[1])
+        row.update({
+            "KRX_배출권가격": float(record.get("예측가격", record.get("forecast"))),
+            "할당량_여유_지수": float(record.get("여유지수", record.get("margin", 0.0))),
+            "원단위": float(record.get("원단위", record.get("intensity", row.get("원단위", 0.0)))),
+            PRICE_STATUS: "예측",
+        })
+        rows.append(row)
+        keys.add(key)
+    return pd.DataFrame(rows)
+
+
+def merge_standardized_updates(
+    base: pd.DataFrame,
+    incoming: pd.DataFrame,
+    bridge_rows: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, list[str], dict]:
+    """기본 마스터셋에 새 실제 월을 병합하고, 사이 구간 예측을 연결한다.
+
+    incoming의 년월은 실제값으로 우선 적용한다. 기존에 저장된 예측 행은
+    새 실제값 이후 구간을 제거하고, 그 전의 빈 월만 forecast snapshot으로
+    채워 실제값을 전월 가격으로 사용하는 연쇄 예측이 가능하게 한다.
+    """
+    base_std, base_warnings = standardize_master(base)
+    incoming_std, incoming_warnings = standardize_master(incoming)
+    if PRICE_STATUS not in base_std:
+        base_std[PRICE_STATUS] = "실제"
+    if PRICE_STATUS not in incoming_std:
+        incoming_std[PRICE_STATUS] = "실제"
+    base_std[PRICE_STATUS] = base_std[PRICE_STATUS].replace({"nan": "실제"}).fillna("실제")
+    incoming_std[PRICE_STATUS] = "실제"
+    existing_keys = set(zip(base_std["년도"].astype(int), base_std["월"].astype(int)))
+    actual_keys = set(zip(incoming_std["년도"].astype(int), incoming_std["월"].astype(int)))
+    actual_dates = pd.to_datetime(incoming_std["년도"].astype(str) + "-" + incoming_std["월"].astype(str) + "-01")
+    first_actual = actual_dates.min() if len(actual_dates) else None
+
+    # 새 실제값 이후의 오래된 예측은 더 이상 사용하지 않는다.
+    if first_actual is not None:
+        stale = (base_std[PRICE_STATUS] == "예측") & (base_std["날짜"] >= first_actual)
+        base_std = base_std.loc[~stale].copy()
+
+    bridge = _bridge_frame(base_std, bridge_rows, actual_keys, first_actual)
+    combined_base = pd.concat([base_std, bridge], ignore_index=True, sort=False)
+    keys = ["년도", "월"]
+    old_index = combined_base.set_index(keys)
+    new_index = incoming_std.set_index(keys)
+    merged = new_index.combine_first(old_index).reset_index()
+    merged, merged_warnings = standardize_master(merged)
+    merged[PRICE_STATUS] = merged[PRICE_STATUS].fillna("실제")
+    warnings = base_warnings + incoming_warnings + merged_warnings
+    bridged = int((merged[PRICE_STATUS] == "예측").sum())
+    replaced = int(len(actual_keys & existing_keys))
+    meta = {
+        "actualMonths": len(actual_keys),
+        "replacedMonths": replaced,
+        "bridgedMonths": bridged,
+        "firstActual": first_actual.strftime("%Y-%m") if first_actual is not None else None,
+        "lastActual": actual_dates.max().strftime("%Y-%m") if len(actual_dates) else None,
+    }
+    if bridged:
+        warnings.append(f"실제값 이전의 빈 월 {bridged}개월을 기존 예측 스냅샷으로 연결했습니다.")
+    return merged, warnings, meta
+
+
+def merge_price_updates(
+    base: pd.DataFrame,
+    price_frames: Iterable[pd.DataFrame],
+    bridge_rows: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, list[str], dict]:
+    """가격 파일만 업로드해도 기존 설명변수와 병합할 수 있게 한다."""
+    base_std, base_warnings = standardize_master(base)
+    prices = _price_monthly(price_frames)
+    if prices.empty:
+        raise ValueError("가격 파일에서 유효한 년월·가격을 찾지 못했습니다.")
+    rows = []
+    for record in prices.to_dict("records"):
+        row = _month_template(base_std, int(record["년도"]), int(record["월"]))
+        row.update({"KRX_배출권가격": float(record["KRX_배출권가격"]), PRICE_STATUS: "실제"})
+        rows.append(row)
+    incoming = pd.DataFrame(rows)
+    merged, warnings, meta = merge_standardized_updates(base_std, incoming, bridge_rows)
+    return merged, base_warnings + warnings, meta
 
 
 def _quantity_column(df: pd.DataFrame, kind: str) -> str:

@@ -1549,7 +1549,7 @@ function Metric({ label, value, delta, deltaLabel, down }) {
 }
 
 /* ---------- pan/zoom time-axis line chart (history solid, forecast dashed) + hover tooltip ---------- */
-function Chart({ history, future, latestDate, defaultStart }) {
+function Chart({ history, forecastHistory = [], future, latestDate, defaultStart }) {
   const W = 760, H = 320, PL = 56, PR = 20, PT = 24, PB = 40;
   const svgRef = React.useRef(null);
   const MS = 86400000;
@@ -1562,7 +1562,13 @@ function Chart({ history, future, latestDate, defaultStart }) {
   const drag = React.useRef(null);
   const [t0, t1] = view;
 
-  const predSeries = [{ 날짜: latestDate, v: history[history.length - 1].y }, ...future.map((r) => ({ 날짜: r.날짜, v: r.예측가격 }))];
+  const pastForecast = forecastHistory.map((r) => ({ 날짜: r.날짜, v: r.y }));
+  const firstPastForecast = pastForecast[0];
+  const pastAnchor = firstPastForecast
+    ? [...history].reverse().find((r) => r.날짜 < firstPastForecast.날짜)
+    : null;
+  const pastPredSeries = pastAnchor ? [{ 날짜: pastAnchor.날짜, v: pastAnchor.y }, ...pastForecast] : pastForecast;
+  const futurePredSeries = [{ 날짜: latestDate, v: history[history.length - 1].y }, ...future.map((r) => ({ 날짜: r.날짜, v: r.예측가격 }))];
   const clampView = (a, b) => {
     const minSpan = 90 * MS, maxSpan = fullMax - fullMin;
     let span = Math.min(Math.max(b - a, minSpan), maxSpan);
@@ -1574,7 +1580,7 @@ function Chart({ history, future, latestDate, defaultStart }) {
   };
 
   // y-axis scales to the currently visible points only
-  const visV = history.concat(future.map((f) => ({ 날짜: f.날짜, y: f.예측가격 })))
+  const visV = history.concat(forecastHistory).concat(future.map((f) => ({ 날짜: f.날짜, y: f.예측가격 })))
     .filter((p) => p.날짜.getTime() >= t0 - MS * 20 && p.날짜.getTime() <= t1 + MS * 20)
     .map((p) => p.y);
   const vmin = Math.min(...visV), vmax = Math.max(...visV);
@@ -1586,9 +1592,11 @@ function Chart({ history, future, latestDate, defaultStart }) {
   const path = (arr, key) => arr.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.날짜).toFixed(1)} ${y(p[key]).toFixed(1)}`).join(' ');
   const nTicks = 4;
   const ticks = Array.from({ length: nTicks + 1 }, (_, i) => Math.round(lo + (i / nTicks) * (hi - lo)));
-  const years = [...new Set(history.concat(future).map((r) => r.날짜.getFullYear()))];
+  const years = [...new Set(history.concat(forecastHistory).concat(future).map((r) => r.날짜.getFullYear()))];
   const forecastX = x(latestDate);
-  const pts = history.map((h) => ({ d: h.날짜, v: h.y, type: '실제' })).concat(future.map((f) => ({ d: f.날짜, v: f.예측가격, type: '예측' })));
+  const pts = history.map((h) => ({ d: h.날짜, v: h.y, type: '실제' }))
+    .concat(forecastHistory.map((f) => ({ d: f.날짜, v: f.y, type: '예측' })))
+    .concat(future.map((f) => ({ d: f.날짜, v: f.예측가격, type: '예측' })));
 
   const svgCoord = (e) => { const r = svgRef.current.getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * W; };
 
@@ -1661,8 +1669,10 @@ function Chart({ history, future, latestDate, defaultStart }) {
             return <line key={'g' + yr} x1={x(d)} x2={x(d)} y1={PT} y2={H - PB} stroke="#f0f1f2" />;
           })}
           <path d={path(history, 'y')} fill="none" stroke="#58616a" strokeWidth="2" />
-          <path d={path(predSeries, 'v')} fill="none" stroke="#256ef4" strokeWidth="2.5" strokeDasharray="6 4" />
-          {future.map((r, i) => <circle key={i} cx={x(r.날짜)} cy={y(r.예측가격)} r="2" fill="#256ef4" />)}
+          {pastPredSeries.length > 0 && <path d={path(pastPredSeries, 'v')} fill="none" stroke="#256ef4" strokeWidth="2.5" strokeDasharray="6 4" />}
+          <path d={path(futurePredSeries, 'v')} fill="none" stroke="#256ef4" strokeWidth="2.5" strokeDasharray="6 4" />
+          {forecastHistory.map((r, i) => <circle key={'past' + i} cx={x(r.날짜)} cy={y(r.y)} r="2" fill="#256ef4" />)}
+          {future.map((r, i) => <circle key={'future' + i} cx={x(r.날짜)} cy={y(r.예측가격)} r="2" fill="#256ef4" />)}
           {tip}
         </g>
         {forecastX >= PL && forecastX <= W - PR && <text x={Math.min(forecastX + 6, W - PR - 56)} y={PT + 12} fontSize="11" fill="#0b50d0" fontWeight="700">예측 시작</text>}
@@ -1687,6 +1697,7 @@ function normalizeForecast(r) {
     ...r,
     latestDate: toDate(r.latestDate), today: toDate(r.today), targetEnd: toDate(r.targetEnd),
     history: r.history.map((h) => ({ 날짜: toDate(h.date || h.날짜), y: h.y })),
+    forecastHistory: (r.forecastHistory || []).map((h) => ({ 날짜: toDate(h.date || h.날짜), y: h.예측가격 ?? h.y })),
     future: r.future.map(rec), next1y: r.next1y.map(rec), nextMonth: r.nextMonth.map(rec),
     todayPred: rec(r.todayPred), nextPred: rec(r.nextPred), lastPred: rec(r.lastPred),
   };
@@ -1760,17 +1771,22 @@ function SidebarDataManager({ r, onDataChanged }) {
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const applyFiles = async (next) => {
+  const applyFiles = async (next, resetBefore = false) => {
     setBusy(true); setMessage('');
     try {
       if (!next.length) {
         const reset = await apiJson('data/reset', { method: 'POST' });
         setClassified([]); setError(false); setMessage(`기본 데이터 복원 · 학습 ${reset.rows}개월`);
       } else {
+        const endpoint = `data/auto-ingest${resetBefore ? '?reset=true' : ''}`;
         const form = new FormData(); next.forEach(file => form.append('files', file));
-        const result = await apiJson('data/auto-ingest', { method: 'POST', body: form });
+        const result = await apiJson(endpoint, { method: 'POST', body: form });
         setClassified(result.classified || []); setError(false);
-        setMessage(`자동 분석·반영 완료 · 학습 ${result.rows}개월`);
+        const update = result.actualUpdate;
+        const updateText = update && update.actualMonths
+          ? `실제 ${update.actualMonths}개월 반영 · ${update.bridgedMonths || 0}개월 연결 예측 후 재계산`
+          : '자동 분석·반영 완료';
+        setMessage(`${updateText} · 학습 ${result.rows}개월`);
       }
       onDataChanged();
     } catch (e) {
@@ -1787,7 +1803,7 @@ function SidebarDataManager({ r, onDataChanged }) {
     setFiles(merged); event.target.value = ''; applyFiles(merged);
   };
   const removeFile = (index) => {
-    const next = files.filter((_, i) => i !== index); setFiles(next); applyFiles(next);
+    const next = files.filter((_, i) => i !== index); setFiles(next); applyFiles(next, true);
   };
   const clearAll = () => { setFiles([]); applyFiles([]); };
   const infoFor = (name) => classified.find(item => item.filename === name);
@@ -1812,7 +1828,7 @@ function SidebarDataManager({ r, onDataChanged }) {
     </div>
     <input ref={inputRef} type="file" multiple accept=".csv,.xlsx,.xls" onChange={addFiles} style={{ display: 'none' }} />
     <button onClick={() => inputRef.current && inputRef.current.click()} disabled={busy} style={{ width: '100%', minHeight: 44, marginTop: 10, border: '1px solid #58616a', borderRadius: 6, background: '#fff', color: '#1e2124', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>{busy ? '파일 분석 중…' : '파일 선택'}</button>
-    <p style={{ margin: '8px 0 0', color: '#6d7882', fontSize: 12, lineHeight: 1.45 }}>가격·원단위·공급·수요 파일을 한 번에 선택하면 자동 분류 후 그래프에 반영합니다.</p>
+    <p style={{ margin: '8px 0 0', color: '#6d7882', fontSize: 12, lineHeight: 1.45 }}>실제 가격을 추가하면 해당 월을 실제값으로 교체하고 이후 월을 다시 예측합니다. 원단위·공급·수요 파일도 함께 자동 반영됩니다.</p>
     <StatusMessage text={message} error={error} />
   </div>;
 }
@@ -1990,7 +2006,7 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
           )}
 
           <div style={{ marginTop: 'auto', fontSize: 13, color: '#6d7882', lineHeight: 1.5, borderTop: '1px solid #cdd1d5', paddingTop: 16 }}>
-            데이터: {r.dataName || DATA_NAME} ({r.history.length + 1}개월). 실행일 이후는 연쇄 릴레이 예측 결과입니다. 백엔드 서버가 실제 모델로 계산합니다.
+            데이터: {r.dataName || DATA_NAME} ({r.actualRows || r.history.length}개월 실제값{r.bridgeRows ? ` + ${r.bridgeRows}개월 연결 예측` : ''}). 실제값이 추가되면 그 다음 달부터 연쇄 재예측합니다.
           </div>
         </aside>
 
@@ -2018,7 +2034,7 @@ function Dashboard({ r, mode, setMode, model, setModel, simMargin, setSimMargin,
             <section style={{ border: '1px solid #b1b8be', borderRadius: 8, background: '#fff', padding: 24, minWidth: 0 }}>
               <h2 style={{ margin: '0 0 4px', fontSize: 19, fontWeight: 700 }}>과거 실제 가격 + 향후 1년 예측 곡선</h2>
               <p style={{ margin: '0 0 16px', fontSize: 15, color: '#6d7882' }}>실선: 실측 · 점선: 실행일 기준 AI 연속 예측 (~{fmtMonth(r.targetEnd)}) · 마우스 휠로 확대·축소, 드래그로 좌우 이동</p>
-              <Chart history={r.history} future={r.future} latestDate={r.latestDate} defaultStart={recentHistory[0].날짜} />
+              <Chart history={r.history} forecastHistory={r.forecastHistory} future={r.future} latestDate={r.latestDate} defaultStart={recentHistory[0].날짜} />
               <div style={{ display: 'flex', gap: 20, marginTop: 16, fontSize: 15, color: '#464c53', flexWrap: 'wrap' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, height: 2, background: '#58616a' }}></span>과거 실제 가격</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 20, borderTop: '2.5px dashed #256ef4' }}></span>AI 연속 예측 곡선</span>
